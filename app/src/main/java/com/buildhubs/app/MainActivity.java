@@ -210,119 +210,111 @@ public class MainActivity extends AppCompatActivity {
         }
     }    private Fields readFields(Uri uri) throws Exception {
 
-        InputStream in =
-                getContentResolver().openInputStream(uri);
+        Fields f = new Fields();
+        String text = "";
 
-        if (in == null) {
-            throw new Exception("לא ניתן לפתוח את PDF המקור.");
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+
+            if (in == null) {
+                throw new Exception("לא ניתן לפתוח את PDF המקור.");
+            }
+
+            try (PDDocument document = PDDocument.load(in)) {
+
+                if (document.getNumberOfPages() == 0) {
+                    throw new Exception("PDF המקור ריק.");
+                }
+
+                PDFTextStripper stripper = new PDFTextStripper();
+                stripper.setSortByPosition(true);
+                text = stripper.getText(document);
+
+                String normalized = normalizeText(text);
+
+                if (!looksLikeVehicleDocument(normalized)) {
+                    PDFTextStripper fallback = new PDFTextStripper();
+                    fallback.setSortByPosition(false);
+                    String fallbackText = fallback.getText(document);
+
+                    if (fallbackText != null &&
+                            fallbackText.trim().length() > normalized.length()) {
+                        text = fallbackText;
+                    }
+                }
+            }
         }
 
-        PDDocument document = PDDocument.load(in);
-
-        PDFTextStripper stripper = new PDFTextStripper();
-        stripper.setSortByPosition(true);
-
-        String text1 = stripper.getText(document);
-
-        PDFTextStripper stripper2 = new PDFTextStripper();
-        stripper2.setSortByPosition(false);
-
-        String text2 = stripper2.getText(document);
-
-        document.close();
-        in.close();
-
-        String text = cleanText(text1 + "\n" + text2);
-
-        Fields f = new Fields();
+        text = normalizeText(text);
 
         f.owner = findTextField(text, "בעלים");
         f.address = findTextField(text, "מען");
         f.make = findTextField(text, "תוצר");
-
         f.id = findId(text);
-
-        f.vehicle = findNumberField(
-                text,
-                "מספר רכב"
-        );
-
-        f.year = findNumberField(
-                text,
-                "שנת ייצור"
-        );
-
-        f.engine = findNumberField(
-                text,
-                "נפח"
-        );
-
+        f.vehicle = findNumberField(text, "מספר רכב");
+        f.year = findNumberField(text, "שנת ייצור");
+        f.engine = findNumberField(text, "נפח");
         f.vin = findVinField(text);
 
-        StringBuilder missing =
-                new StringBuilder();
+        StringBuilder missing = new StringBuilder();
 
-        if (isEmpty(f.owner)) {
-            missing.append("בעלים, ");
-        }
-
-        if (isEmpty(f.id)) {
-            missing.append("תעודת זהות, ");
-        }
-
-        if (isEmpty(f.vehicle)) {
-            missing.append("מספר רכב, ");
-        }
-
-        if (isEmpty(f.address)) {
-            missing.append("מען, ");
-        }
-
-        if (isEmpty(f.year)) {
-            missing.append("שנת ייצור, ");
-        }
-
-        if (isEmpty(f.engine)) {
-            missing.append("נפח, ");
-        }
-
-        if (isEmpty(f.make)) {
-            missing.append("תוצר, ");
-        }
-
-        if (isEmpty(f.vin)) {
-            missing.append("מספר שילדה, ");
-        }
+        if (isEmpty(f.owner))   missing.append("בעלים, ");
+        if (isEmpty(f.id))      missing.append("תעודת זהות, ");
+        if (isEmpty(f.vehicle)) missing.append("מספר רכב, ");
+        if (isEmpty(f.address)) missing.append("מען, ");
+        if (isEmpty(f.year))    missing.append("שנת ייצור, ");
+        if (isEmpty(f.engine))  missing.append("נפח, ");
+        if (isEmpty(f.make))    missing.append("תוצר, ");
+        if (isEmpty(f.vin))     missing.append("מספר שילדה, ");
 
         if (missing.length() > 0) {
-
-            String missingText =
-                    missing.toString();
-
+            String missingText = missing.toString();
             if (missingText.endsWith(", ")) {
-                missingText =
-                        missingText.substring(
-                                0,
-                                missingText.length() - 2
-                        );
+                missingText = missingText.substring(0, missingText.length() - 2);
             }
 
             throw new Exception(
-                    "לא הצלחתי לזהות את השדות: " +
-                    missingText
+                    "לא הצלחתי לזהות: " + missingText +
+                    ". ודא שזה PDF עם טקסט ולא צילום סרוק."
             );
         }
 
         return f;
     }
 
-    private String cleanText(String text) {
+    private boolean looksLikeVehicleDocument(String text) {
+        if (text == null) return false;
+
+        int found = 0;
+
+        String[] labels = {
+                "בעלים",
+                "מען",
+                "תוצר",
+                "מספר רכב",
+                "שנת ייצור",
+                "נפח",
+                "תעודת זהות",
+                "ת.ז",
+                "שילדה",
+                "VIN"
+        };
+
+        for (String label : labels) {
+            if (text.contains(label)) {
+                found++;
+            }
+        }
+
+        return found >= 2;
+    }
+
+    private String normalizeText(String text) {
 
         if (text == null) {
             return "";
         }
 
-        return text
+        text = text
                 .replace("\u200E", "")
                 .replace("\u200F", "")
                 .replace("\u202A", "")
@@ -334,137 +326,233 @@ public class MainActivity extends AppCompatActivity {
                 .replace("\u2067", "")
                 .replace("\u2069", "")
                 .replace('\u00A0', ' ')
-                .replaceAll("[ \\t]+", " ")
-                .trim();
+                .replace('\u0000', ' ');
+
+        text = text.replace("\r\n", "\n")
+                .replace('\r', '\n');
+
+        text = text.replaceAll("[ \t]+", " ");
+        text = text.replaceAll(" *\n *", "\n");
+        text = text.replaceAll("\n{3,}", "\n\n");
+
+        return text.trim();
     }
 
-    private String findTextField(
-            String text,
-            String label
-    ) {
+    private String cleanText(String text) {
+        return normalizeText(text).replace("\n", " ").trim();
+    }
 
-        Pattern sameLine =
-                Pattern.compile(
-                        Pattern.quote(label) +
-                        "\\s*[:\\-]?\\s*" +
-                        "([^\\r\\n]+)"
-                );
+    private String findTextField(String text, String label) {
 
-        Matcher m =
-                sameLine.matcher(text);
-
-        if (m.find()) {
-
-            String value =
-                    cleanText(m.group(1));
-
-            if (!isAnotherLabel(value)) {
-                return value;
-            }
+        if (text == null || text.isEmpty()) {
+            return null;
         }
 
-        Pattern nextLine =
-                Pattern.compile(
-                        Pattern.quote(label) +
-                        "\\s*\\R\\s*" +
-                        "([^\\r\\n]+)"
-                );
+        String[] lines = text.split("\n");
 
-        m = nextLine.matcher(text);
+        for (int i = 0; i < lines.length; i++) {
 
-        if (m.find()) {
+            String line = lines[i].trim();
+            if (line.isEmpty()) continue;
 
-            String value =
-                    cleanText(m.group(1));
+            int pos = line.indexOf(label);
 
-            if (!isAnotherLabel(value)) {
-                return value;
+            if (pos >= 0) {
+
+                String value = line.substring(pos + label.length())
+                        .replaceFirst("^[\\s:：\\-–—]+", "")
+                        .trim();
+
+                value = cleanFieldValue(value);
+
+                if (isValidTextValue(value)) {
+                    return value;
+                }
+
+                if (i + 1 < lines.length) {
+                    String next = cleanFieldValue(lines[i + 1]);
+
+                    if (isValidTextValue(next)) {
+                        return next;
+                    }
+                }
             }
         }
 
         return null;
     }
 
-    private boolean isAnotherLabel(String value) {
+    private String cleanFieldValue(String value) {
 
-        if (value == null) {
-            return true;
+        if (value == null) return "";
+
+        value = normalizeText(value)
+                .replace("\n", " ")
+                .trim();
+
+        value = value.replaceAll("^[\\s:：\\-–—]+", "");
+        value = value.replaceAll("[\\s:：\\-–—]+$", "");
+
+        return value.trim();
+    }
+
+    private boolean isValidTextValue(String value) {
+
+        if (value == null || value.trim().isEmpty()) {
+            return false;
         }
 
-        String v = cleanText(value);
+        String v = value.trim();
+
+        if (isKnownLabel(v)) {
+            return false;
+        }
+
+        String[] labels = {
+                "בעלים", "מען", "תוצר", "תעודת זהות", "ת.ז",
+                "מספר רכב", "שנת ייצור", "נפח", "מספר שילדה",
+                "שילדה מספר", "VIN"
+        };
+
+        for (String label : labels) {
+            if (v.startsWith(label + " ") ||
+                    v.startsWith(label + ":")) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private boolean isKnownLabel(String value) {
+
+        if (value == null) return true;
+
+        String v = value.trim();
 
         return v.equals("בעלים") ||
                 v.equals("מען") ||
                 v.equals("תוצר") ||
                 v.equals("תעודת זהות") ||
+                v.equals("ת.ז") ||
                 v.equals("מספר רכב") ||
                 v.equals("שנת ייצור") ||
                 v.equals("נפח") ||
-                v.contains("מספר שילדה");
+                v.equals("מספר שילדה") ||
+                v.equals("שילדה מספר") ||
+                v.equalsIgnoreCase("VIN");
     }
 
-    private String findNumberField(
-            String text,
-            String label
-    ) {
+    private String findNumberField(String text, String label) {
 
-        Pattern p =
-                Pattern.compile(
-                        Pattern.quote(label) +
-                        "\\s*[:\\-]?\\s*" +
-                        "([0-9]{2,10})"
-                );
+        if (text == null) return null;
 
-        Matcher m = p.matcher(text);
+        String[] lines = text.split("\n");
 
-        if (m.find()) {
-            return m.group(1);
-        }
+        for (int i = 0; i < lines.length; i++) {
 
-        p = Pattern.compile(
-                Pattern.quote(label) +
-                "\\s*\\R\\s*" +
-                "([0-9]{2,10})"
-        );
+            String line = lines[i].trim();
 
-        m = p.matcher(text);
+            if (!line.contains(label)) continue;
 
-        if (m.find()) {
-            return m.group(1);
+            String after = line.substring(
+                    line.indexOf(label) + label.length()
+            );
+
+            Matcher m = Pattern.compile(
+                    "(?<!\\d)(\\d{1,10})(?!\\d)"
+            ).matcher(after);
+
+            if (m.find()) {
+                String value = m.group(1);
+
+                if (isValidNumberForField(label, value)) {
+                    return value;
+                }
+            }
+
+            if (i + 1 < lines.length) {
+
+                Matcher next = Pattern.compile(
+                        "^\\s*(\\d{1,10})\\s*$"
+                ).matcher(lines[i + 1]);
+
+                if (next.find()) {
+
+                    String value = next.group(1);
+
+                    if (isValidNumberForField(label, value)) {
+                        return value;
+                    }
+                }
+            }
         }
 
         return null;
     }
 
+    private boolean isValidNumberForField(String label, String value) {
+
+        if (value == null || value.isEmpty()) return false;
+
+        try {
+            int n = Integer.parseInt(value);
+
+            if (label.equals("שנת ייצור")) {
+                return n >= 1900 && n <= 2100;
+            }
+
+            if (label.equals("מספר רכב")) {
+                return value.length() >= 5 && value.length() <= 9;
+            }
+
+            if (label.equals("נפח")) {
+                return value.length() >= 2 && value.length() <= 6;
+            }
+
+            return true;
+
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private String findId(String text) {
 
-        Pattern[] patterns = {
+        if (text == null) return null;
 
-                Pattern.compile(
-                        "תעודת\\s*זהות\\s*" +
-                        "[:\\-]?\\s*" +
-                        "([0-9]{5,10}\\s*-\\s*[0-9]{1,3})"
-                ),
+        String[] patterns = {
 
-                Pattern.compile(
-                        "ת\\.ז\\.\\s*" +
-                        "[:\\-]?\\s*" +
-                        "([0-9]{5,10}\\s*-\\s*[0-9]{1,3})"
-                ),
-
-                Pattern.compile(
-                        "\\b([0-9]{5,10}\\s*-\\s*[0-9]{1,3})\\b"
-                )
+                "תעודת\\s*זהות\\s*[:：\\-]?\\s*(\\d{7,9})\\s*[-–]\\s*(\\d)",
+                "תעודת\\s*זהות\\s*[:：\\-]?\\s*(\\d{8,9})",
+                "ת\\.?\\s*ז\\.?\\s*[:：\\-]?\\s*(\\d{7,9})\\s*[-–]\\s*(\\d)",
+                "\\b(\\d{7,9})\\s*[-–]\\s*(\\d)\\b"
         };
 
-        for (Pattern p : patterns) {
+        for (String regex : patterns) {
 
-            Matcher m = p.matcher(text);
+            Matcher m = Pattern.compile(
+                    regex,
+                    Pattern.CASE_INSENSITIVE
+            ).matcher(text);
 
             if (m.find()) {
 
-                return m.group(1)
+                String first = m.group(1)
                         .replaceAll("\\s+", "");
+
+                if (m.groupCount() >= 2 &&
+                        m.group(2) != null) {
+
+                    String second = m.group(2)
+                            .replaceAll("\\s+", "");
+
+                    if (!second.isEmpty()) {
+                        return first + "-" + second;
+                    }
+                }
+
+                return first;
             }
         }
 
@@ -473,40 +561,91 @@ public class MainActivity extends AppCompatActivity {
 
     private String findVinField(String text) {
 
-        Pattern p1 =
-                Pattern.compile(
-                        "מספר\\s*שילדה\\s*" +
-                        "[:\\-]?\\s*" +
-                        "([A-Za-z0-9]{10,25})",
-                        Pattern.CASE_INSENSITIVE
-                );
+        if (text == null) return null;
 
-        Matcher m = p1.matcher(text);
+        Pattern vin17 = Pattern.compile(
+                "(?<![A-Za-z0-9])([A-HJ-NPR-Z0-9]{17})(?![A-Za-z0-9])",
+                Pattern.CASE_INSENSITIVE
+        );
 
-        if (m.find()) {
-            return m.group(1);
+        Matcher m = vin17.matcher(text);
+
+        while (m.find()) {
+
+            String vin = m.group(1).toUpperCase();
+
+            if (vin.matches(".*[A-Z].*")) {
+                return vin;
+            }
         }
 
-        Pattern p2 =
-                Pattern.compile(
-                        "([A-Za-z0-9]{10,25})" +
-                        "\\s+שילדה\\s+מספר",
-                        Pattern.CASE_INSENSITIVE
-                );
+        Pattern afterLabel = Pattern.compile(
+                "מספר\\s*שילדה\\s*[:：\\-]?\\s*" +
+                "([A-HJ-NPR-Z0-9]{10,25})",
+                Pattern.CASE_INSENSITIVE
+        );
 
-        m = p2.matcher(text);
+        m = afterLabel.matcher(text);
 
         if (m.find()) {
-            return m.group(1);
+            return m.group(1).toUpperCase();
+        }
+
+        Pattern beforeLabel = Pattern.compile(
+                "([A-HJ-NPR-Z0-9]{10,25})\\s*" +
+                "שילדה\\s*מספר",
+                Pattern.CASE_INSENSITIVE
+        );
+
+        m = beforeLabel.matcher(text);
+
+        if (m.find()) {
+            return m.group(1).toUpperCase();
+        }
+
+        String[] lines = text.split("\n");
+
+        for (int i = 0; i < lines.length; i++) {
+
+            String line = lines[i].trim();
+
+            if (line.contains("שילדה")) {
+
+                Matcher candidate = Pattern.compile(
+                        "([A-HJ-NPR-Z0-9]{10,25})",
+                        Pattern.CASE_INSENSITIVE
+                ).matcher(line);
+
+                if (candidate.find()) {
+                    String vin = candidate.group(1).toUpperCase();
+
+                    if (vin.matches(".*[A-Z].*")) {
+                        return vin;
+                    }
+                }
+
+                if (i + 1 < lines.length) {
+
+                    candidate = Pattern.compile(
+                            "^\\s*([A-HJ-NPR-Z0-9]{10,25})\\s*$",
+                            Pattern.CASE_INSENSITIVE
+                    ).matcher(lines[i + 1]);
+
+                    if (candidate.find()) {
+                        return candidate.group(1).toUpperCase();
+                    }
+                }
+            }
         }
 
         return null;
     }
 
     private boolean isEmpty(String s) {
-        return s == null ||
-                s.trim().isEmpty();
-    }    private void editTarget(
+        return s == null || s.trim().isEmpty();
+    }
+
+    private void editTarget(
             Uri uri,
             File out,
             Fields f
@@ -631,11 +770,11 @@ public class MainActivity extends AppCompatActivity {
             boolean rtl
     ) throws Exception {
 
-        if (text == null) {
+        if (isEmpty(text)) {
             return;
         }
 
-        text = cleanText(text);
+        text = cleanFieldValue(text);
 
         if (text.isEmpty()) {
             return;
@@ -650,80 +789,74 @@ public class MainActivity extends AppCompatActivity {
                         true
                 );
 
-        // מחיקת הערך הישן
-        cs.setNonStrokingColor(Color.WHITE);
+        try {
 
-        cs.addRect(
-                x0,
-                y0,
-                x1 - x0,
-                y1 - y0
-        );
+            cs.setNonStrokingColor(Color.WHITE);
+            cs.addRect(x0, y0, x1 - x0, y1 - y0);
+            cs.fill();
 
-        cs.fill();
+            String visualText = text;
 
-        // כתיבת הערך החדש
-        cs.beginText();
-
-        cs.setNonStrokingColor(Color.BLACK);
-        cs.setFont(font, size);
-
-        String visualText = text;
-
-        if (rtl) {
-
-            try {
-
-                Bidi bidi = new Bidi(
-                        text,
-                        Bidi.DIRECTION_RIGHT_TO_LEFT
-                );
-
-                visualText =
-                        bidi.writeReordered(
-                                Bidi.DO_MIRRORING
-                        );
-
-            } catch (Exception ignored) {
-            }
-        }
-
-        float textWidth =
-                font.getStringWidth(visualText)
-                / 1000f
-                * size;
-
-        float availableWidth =
-                x1 - x0;
-
-        float tx;
-
-        if (rtl) {
-
-            tx =
-                    x1 -
-                    Math.min(
-                            textWidth,
-                            availableWidth
+            if (rtl) {
+                try {
+                    Bidi bidi = new Bidi(
+                            text,
+                            Bidi.DIRECTION_RIGHT_TO_LEFT
                     );
 
-        } else {
+                    visualText = bidi.writeReordered(
+                            Bidi.DO_MIRRORING
+                    );
 
-            tx = x0;
+                } catch (Exception ignored) {
+                }
+            }
+
+            float availableWidth = x1 - x0;
+            float drawSize = size;
+
+            while (drawSize > 5f) {
+
+                float width =
+                        font.getStringWidth(visualText)
+                                / 1000f
+                                * drawSize;
+
+                if (width <= availableWidth) {
+                    break;
+                }
+
+                drawSize -= 0.5f;
+            }
+
+            float textWidth =
+                    font.getStringWidth(visualText)
+                            / 1000f
+                            * drawSize;
+
+            float tx;
+
+            if (rtl) {
+                tx = x1 - Math.min(textWidth, availableWidth);
+            } else {
+                tx = x0;
+            }
+
+            float ty =
+                    y0 +
+                    ((y1 - y0 - drawSize) / 2f) +
+                    (drawSize * 0.72f);
+
+            cs.beginText();
+            cs.setNonStrokingColor(Color.BLACK);
+            cs.setFont(font, drawSize);
+            cs.newLineAtOffset(tx, ty);
+            cs.showText(visualText);
+            cs.endText();
+
+        } finally {
+            cs.close();
         }
-
-        float ty =
-                y0 +
-                ((y1 - y0 - size) / 2f) +
-                (size * 0.72f);
-
-        cs.newLineAtOffset(tx, ty);
-
-        cs.showText(visualText);
-
-        cs.endText();
-
-        cs.close();
     }
 
     private void share(File file) {
