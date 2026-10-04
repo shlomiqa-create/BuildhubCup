@@ -229,6 +229,17 @@ public class MainActivity extends AppCompatActivity {
         if (isEmpty(f.vehicle)) f.vehicle = findVehicleContextual(text);
         if (isEmpty(f.make)) f.make = findMakeContextual(text);
         if (isEmpty(f.vin)) f.vin = findVinContextual(text);
+
+        // VehicleParser is the primary parser (tested on real PDFBox output); the code above is only a fallback.
+        VehicleParser.Fields vp = VehicleParser.parse(text);
+        f.owner = first(vp.owner, f.owner);
+        f.id = first(vp.id, f.id);
+        f.vehicle = first(vp.vehicle, f.vehicle);
+        f.address = first(vp.address, f.address);
+        f.year = first(vp.year, f.year);
+        f.engine = first(vp.engine, f.engine);
+        f.make = first(vp.make, f.make);
+        f.vin = first(vp.vin, f.vin);
         return f;
     }
 
