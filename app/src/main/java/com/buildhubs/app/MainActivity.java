@@ -571,11 +571,75 @@ private String findNumberField(String text, String label) {
 
         return null;
     }
+private String findVinField(String text) {
 
-    private String findVinField(String text) {
+    if (text == null || text.isEmpty()) {
+        return null;
+    }
 
-        if (text == null || text.isEmpty()) {
-            return null;
+    String t = normalizeText(text);
+
+    // מספר שילדה TMB...
+    Pattern p = Pattern.compile(
+            "מספר\\s*שילדה" +
+            "\\s*[:：\\-–—]?\\s*" +
+            "([A-Za-z0-9]{10,25})",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    Matcher m = p.matcher(t);
+
+    if (m.find()) {
+        return m.group(1).toUpperCase();
+    }
+
+    // TMB... שילדה מספר
+    p = Pattern.compile(
+            "([A-Za-z0-9]{10,25})" +
+            "\\s+שילדה\\s+מספר",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    m = p.matcher(t);
+
+    if (m.find()) {
+        return m.group(1).toUpperCase();
+    }
+
+    // שילדה מספר TMB...
+    p = Pattern.compile(
+            "שילדה\\s+מספר" +
+            "\\s*[:：\\-–—]?\\s*" +
+            "([A-Za-z0-9]{10,25})",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    m = p.matcher(t);
+
+    if (m.find()) {
+        return m.group(1).toUpperCase();
+    }
+
+    // חיפוש VIN בן 17 תווים בכל הטקסט
+    Pattern vin17 = Pattern.compile(
+            "(?<![A-Za-z0-9])" +
+            "([A-HJ-NPR-Z0-9]{17})" +
+            "(?![A-Za-z0-9])",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    m = vin17.matcher(t);
+
+    while (m.find()) {
+
+        String vin = m.group(1).toUpperCase();
+
+        if (vin.matches(".*[A-Z].*")) {
+            return vin;
+        }
+    }
+
+    return null;
         }
 
         String t = cleanText(text);
