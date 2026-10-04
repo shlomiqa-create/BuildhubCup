@@ -35,26 +35,30 @@ public final class PdfFiller {
                             String year, String engine, String make, String vin, InputStream fontStream) throws IOException {
         PDPage page = doc.getPage(0);
         float pageH = page.getMediaBox().getHeight();
+        float pageW = page.getMediaBox().getWidth();
+        // Cell coordinates below were measured on A4 (595.28 x 841.89). Other page sizes
+        // (e.g. a Letter copy with the form scaled to fit) are handled by uniform scaling.
+        float k = Math.min(pageW / 595.276f, pageH / 841.89f);
         PDType0Font font = PDType0Font.load(doc, fontStream, true);
 
         PDPageContentStream cs = new PDPageContentStream(doc, page,
                 PDPageContentStream.AppendMode.APPEND, true, true);
         try {
-            put(cs, font, pageH, OWNER, owner, RIGHT, 10f, false);
-            put(cs, font, pageH, ID, id, CENTER, 10f, false);
-            put(cs, font, pageH, VEHICLE, vehicle, CENTER, 10f, false);
-            put(cs, font, pageH, ADDRESS, address, RIGHT, 10f, false);
-            put(cs, font, pageH, YEAR, year, CENTER, 10f, false);
-            put(cs, font, pageH, ENGINE, engine, CENTER, 10f, false);
-            put(cs, font, pageH, MAKE, make, CENTER, 10f, false);
-            put(cs, font, pageH, VIN, vin, CENTER, 10f, false);
+            put(cs, font, pageH, k, OWNER, owner, RIGHT, 10f, false);
+            put(cs, font, pageH, k, ID, id, CENTER, 10f, false);
+            put(cs, font, pageH, k, VEHICLE, vehicle, CENTER, 10f, false);
+            put(cs, font, pageH, k, ADDRESS, address, RIGHT, 10f, false);
+            put(cs, font, pageH, k, YEAR, year, CENTER, 10f, false);
+            put(cs, font, pageH, k, ENGINE, engine, CENTER, 10f, false);
+            put(cs, font, pageH, k, MAKE, make, CENTER, 10f, false);
+            put(cs, font, pageH, k, VIN, vin, CENTER, 10f, false);
 
             if (notEmpty(owner) || notEmpty(id)) {
                 StringBuilder big = new StringBuilder("ת\"ז");
                 if (notEmpty(id)) big.append(' ').append(id);
                 if (notEmpty(owner)) big.append(' ').append(owner);
                 big.append(" בלבד");
-                put(cs, font, pageH, BIG, big.toString(), CENTER, 24f, true);
+                put(cs, font, pageH, k, BIG, big.toString(), CENTER, 24f, true);
             }
         } finally {
             cs.close();
@@ -63,9 +67,11 @@ public final class PdfFiller {
 
     private static boolean notEmpty(String s) { return s != null && !s.trim().isEmpty(); }
 
-    private static void put(PDPageContentStream cs, PDType0Font font, float pageH, float[] r,
-                            String text, int align, float maxSize, boolean bold) throws IOException {
+    private static void put(PDPageContentStream cs, PDType0Font font, float pageH, float k, float[] cell,
+                            String text, int align, float maxSize0, boolean bold) throws IOException {
         if (!notEmpty(text)) return;
+        float[] r = {cell[0] * k, cell[1] * k, cell[2] * k, cell[3] * k};
+        float maxSize = maxSize0 * k;
         float x0 = r[0], x1 = r[2], h = r[3] - r[1];
         // white cover, slightly inset so the table borders stay visible
         cs.setNonStrokingColor(255, 255, 255);
