@@ -385,28 +385,56 @@ public class MainActivity extends AppCompatActivity {
 
     private String findOwnerContextual(String text) {
         String t = searchableText(text);
-        String hebrewName = "([א-ת][א-ת'׳\\-]*(?:\\s+[א-ת][א-ת'׳\\-]*){1,2})";
 
-        // Use the specific label first. Do not use the title "פרטי רכב ובעלים" as a field label.
-        Matcher after = Pattern.compile(
-                "שם\\s*הבעלים\\s*[:\\-]?\\s*" + hebrewName
+        // PDFBox may return punctuation, digits or reversed RTL around the label.
+        // Capture only 2-4 consecutive Hebrew words next to the specific owner label.
+        String name = "([א-ת][א-ת'׳-]*(?:\\s+[א-ת][א-ת'׳-]*){1,3})";
+        String normalLabel = "שם\\s*הבעלים";
+        String reversedLabel = "םילעבה\\s*םש";
+
+        String[] afterPatterns = {
+                normalLabel + "[^א-ת]{0,40}" + name,
+                reversedLabel + "[^א-ת]{0,40}" + name
+        };
+        for (String regex : afterPatterns) {
+            Matcher m = Pattern.compile(regex).matcher(t);
+            if (m.find()) {
+                String value = cleanOwnerName(m.group(1));
+                if (!isEmpty(value)) return value;
+            }
+        }
+
+        String[] beforePatterns = {
+                name + "[^א-ת]{0,40}" + normalLabel,
+                name + "[^א-ת]{0,40}" + reversedLabel
+        };
+        for (String regex : beforePatterns) {
+            Matcher m = Pattern.compile(regex).matcher(t);
+            String result = null;
+            while (m.find()) {
+                String value = cleanOwnerName(m.group(1));
+                if (!isEmpty(value)) result = value;
+            }
+            if (!isEmpty(result)) return result;
+        }
+
+        // Last safe fallback: in the real report the owner also appears immediately
+        // before the internal policy/account number and the specific owner label.
+        Matcher reportLayout = Pattern.compile(
+                name + "\\s+\\d{2,4}[-–]\\d{2,4}[-–]\\d{2,4}\\s*" + normalLabel
         ).matcher(t);
-        if (after.find()) return cleanValue(after.group(1));
+        if (reportLayout.find()) return cleanOwnerName(reportLayout.group(1));
 
-        // Visual RTL form: עידו צמח םילעבה םש
-        Matcher before = Pattern.compile(
-                hebrewName + "\\s*(?:םילעבה\\s*םש|שם\\s*הבעלים)"
-        ).matcher(t);
-        String result = null;
-        while (before.find()) result = cleanValue(before.group(1));
-        if (!isEmpty(result)) return result;
-
-        // Generic "בעלים" is allowed only at the beginning of a line, preventing a match in the document title.
-        Matcher generic = Pattern.compile(
-                "(?m)^\\s*בעלים\\s*[:\\-]?\\s*" + hebrewName
-        ).matcher(normalizeText(text));
-        if (generic.find()) return cleanValue(generic.group(1));
         return null;
+    }
+
+    private String cleanOwnerName(String value) {
+        if (isEmpty(value)) return null;
+        String cleaned = value.replaceAll("[^א-ת'׳ -]", " ")
+                .replaceAll("\\s+", " ").trim();
+        if (!cleaned.matches("[א-ת][א-ת'׳-]*(?:\\s+[א-ת][א-ת'׳-]*){1,3}")) return null;
+        if (cleaned.contains("פרטי רכב") || cleaned.contains("שם הבעלים")) return null;
+        return cleaned;
     }
 
     private String findIdContextual(String text) {
