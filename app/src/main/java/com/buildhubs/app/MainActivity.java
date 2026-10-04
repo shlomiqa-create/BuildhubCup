@@ -345,39 +345,64 @@ public class MainActivity extends AppCompatActivity {
             String label
     ) {
 
-        Pattern sameLine =
-                Pattern.compile(
-                        Pattern.quote(label) +
-                        "\\s*[:\\-]?\\s*" +
-                        "([^\\r\\n]+)"
-                );
+        if (text == null || text.isEmpty()) {
+            return null;
+        }
 
-        Matcher m =
-                sameLine.matcher(text);
+        String t = cleanText(text);
+
+        // צורה רגילה:
+        // תוצר טויוטה
+        Pattern p = Pattern.compile(
+                Pattern.quote(label) +
+                "\\s*[:\\-]?\\s*" +
+                "([^\\r\\n]+)"
+        );
+
+        Matcher m = p.matcher(t);
 
         if (m.find()) {
 
-            String value =
-                    cleanText(m.group(1));
+            String value = cleanText(m.group(1));
 
             if (!isAnotherLabel(value)) {
                 return value;
             }
         }
 
-        Pattern nextLine =
-                Pattern.compile(
-                        Pattern.quote(label) +
-                        "\\s*\\R\\s*" +
-                        "([^\\r\\n]+)"
-                );
+        // צורה בשתי שורות:
+        // תוצר
+        // טויוטה
+        p = Pattern.compile(
+                Pattern.quote(label) +
+                "\\s*\\R\\s*" +
+                "([^\\r\\n]+)"
+        );
 
-        m = nextLine.matcher(text);
+        m = p.matcher(t);
 
         if (m.find()) {
 
-            String value =
-                    cleanText(m.group(1));
+            String value = cleanText(m.group(1));
+
+            if (!isAnotherLabel(value)) {
+                return value;
+            }
+        }
+
+        // צורה הפוכה:
+        // טויוטה תוצר
+        p = Pattern.compile(
+                "([^\\r\\n]{1,60})" +
+                "\\s+" +
+                Pattern.quote(label)
+        );
+
+        m = p.matcher(t);
+
+        if (m.find()) {
+
+            String value = cleanText(m.group(1));
 
             if (!isAnotherLabel(value)) {
                 return value;
@@ -410,26 +435,50 @@ public class MainActivity extends AppCompatActivity {
             String label
     ) {
 
-        Pattern p =
-                Pattern.compile(
-                        Pattern.quote(label) +
-                        "\\s*[:\\-]?\\s*" +
-                        "([0-9]{2,10})"
-                );
+        if (text == null || text.isEmpty()) {
+            return null;
+        }
 
-        Matcher m = p.matcher(text);
+        String t = cleanText(text);
+
+        // צורה רגילה:
+        // נפח 1598
+        Pattern p = Pattern.compile(
+                Pattern.quote(label) +
+                "\\s*[:\\-]?\\s*" +
+                "([0-9]{2,10})"
+        );
+
+        Matcher m = p.matcher(t);
 
         if (m.find()) {
             return m.group(1);
         }
 
+        // צורה בשתי שורות:
+        // נפח
+        // 1598
         p = Pattern.compile(
                 Pattern.quote(label) +
                 "\\s*\\R\\s*" +
                 "([0-9]{2,10})"
         );
 
-        m = p.matcher(text);
+        m = p.matcher(t);
+
+        if (m.find()) {
+            return m.group(1);
+        }
+
+        // צורה הפוכה:
+        // 1598 נפח
+        p = Pattern.compile(
+                "([0-9]{2,10})" +
+                "\\s*" +
+                Pattern.quote(label)
+        );
+
+        m = p.matcher(t);
 
         if (m.find()) {
             return m.group(1);
@@ -475,28 +524,51 @@ public class MainActivity extends AppCompatActivity {
 
     private String findVinField(String text) {
 
-        Pattern p1 =
-                Pattern.compile(
-                        "מספר\\s*שילדה\\s*" +
-                        "[:\\-]?\\s*" +
-                        "([A-Za-z0-9]{10,25})",
-                        Pattern.CASE_INSENSITIVE
-                );
+        if (text == null || text.isEmpty()) {
+            return null;
+        }
 
-        Matcher m = p1.matcher(text);
+        String t = cleanText(text);
+
+        // צורה:
+        // מספר שילדה TMB...
+        Pattern p = Pattern.compile(
+                "מספר\\s*שילדה" +
+                "\\s*[:\\-]?\\s*" +
+                "([A-Za-z0-9]{10,25})",
+                Pattern.CASE_INSENSITIVE
+        );
+
+        Matcher m = p.matcher(t);
 
         if (m.find()) {
             return m.group(1);
         }
 
-        Pattern p2 =
-                Pattern.compile(
-                        "([A-Za-z0-9]{10,25})" +
-                        "\\s+שילדה\\s+מספר",
-                        Pattern.CASE_INSENSITIVE
-                );
+        // צורה הפוכה:
+        // TMB... שילדה מספר
+        p = Pattern.compile(
+                "([A-Za-z0-9]{10,25})" +
+                "\\s+שילדה\\s+מספר",
+                Pattern.CASE_INSENSITIVE
+        );
 
-        m = p2.matcher(text);
+        m = p.matcher(t);
+
+        if (m.find()) {
+            return m.group(1);
+        }
+
+        // צורה:
+        // שילדה מספר TMB...
+        p = Pattern.compile(
+                "שילדה\\s+מספר" +
+                "\\s*[:\\-]?\\s*" +
+                "([A-Za-z0-9]{10,25})",
+                Pattern.CASE_INSENSITIVE
+        );
+
+        m = p.matcher(t);
 
         if (m.find()) {
             return m.group(1);
@@ -655,7 +727,7 @@ public class MainActivity extends AppCompatActivity {
                 );
 
         // מחיקת הערך הישן
-        // PDFBox דורש כאן ערכי RGB בין 0 ל-255
+        // PDFBox דורש ערכי RGB בין 0 ל-255
         cs.setNonStrokingColor(
                 255,
                 255,
@@ -674,7 +746,7 @@ public class MainActivity extends AppCompatActivity {
         // כתיבת הערך החדש
         cs.beginText();
 
-        // PDFBox דורש כאן ערכי RGB בין 0 ל-255
+        // PDFBox דורש ערכי RGB בין 0 ל-255
         cs.setNonStrokingColor(
                 0,
                 0,
