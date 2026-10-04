@@ -38,7 +38,7 @@ import java.util.regex.Pattern;
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "BUILD_HUBS_PDF";
 
-    private static final String[] OWNER_LABELS = {"שם הבעלים", "בעלים", "םילעב"};
+    private static final String[] OWNER_LABELS = {"שם הבעלים", "בעלים", "םילעבה םש", "םילעב"};
     private static final String[] ID_LABELS = {"מס׳ זהות / ח״פ", "מס זהות", "תעודת זהות", "זהות תעודת", "ת.ז.", "ת.ז", "תז", "זהות"};
     private static final String[] VEHICLE_LABELS = {"מס׳ רישוי", "מס' רישוי", "מס רישוי", "מספר רכב", "רכב מספר", "רישוי'מס", "רפסמ בכר", "בכר רפסמ"};
     private static final String[] ADDRESS_LABELS = {"מען", "כתובת", "ןעמ", "תבותכ"};
@@ -228,6 +228,7 @@ public class MainActivity extends AppCompatActivity {
         f.vin = findVin(text);
 
         // Final contextual fallback for PDFs that place several fields on one visual line.
+        if (isEmpty(f.owner)) f.owner = findOwnerContextual(text);
         if (isEmpty(f.id)) f.id = findIdContextual(text);
         if (isEmpty(f.vehicle)) f.vehicle = findVehicleContextual(text);
         if (isEmpty(f.make)) f.make = findMakeContextual(text);
@@ -380,6 +381,32 @@ public class MainActivity extends AppCompatActivity {
                 .replace('״', '"')
                 .replaceAll("[\\t ]+", " ")
                 .trim();
+    }
+
+    private String findOwnerContextual(String text) {
+        String t = searchableText(text);
+        String hebrewName = "([א-ת][א-ת'׳\\-]*(?:\\s+[א-ת][א-ת'׳\\-]*){1,2})";
+
+        // Use the specific label first. Do not use the title "פרטי רכב ובעלים" as a field label.
+        Matcher after = Pattern.compile(
+                "שם\\s*הבעלים\\s*[:\\-]?\\s*" + hebrewName
+        ).matcher(t);
+        if (after.find()) return cleanValue(after.group(1));
+
+        // Visual RTL form: עידו צמח םילעבה םש
+        Matcher before = Pattern.compile(
+                hebrewName + "\\s*(?:םילעבה\\s*םש|שם\\s*הבעלים)"
+        ).matcher(t);
+        String result = null;
+        while (before.find()) result = cleanValue(before.group(1));
+        if (!isEmpty(result)) return result;
+
+        // Generic "בעלים" is allowed only at the beginning of a line, preventing a match in the document title.
+        Matcher generic = Pattern.compile(
+                "(?m)^\\s*בעלים\\s*[:\\-]?\\s*" + hebrewName
+        ).matcher(normalizeText(text));
+        if (generic.find()) return cleanValue(generic.group(1));
+        return null;
     }
 
     private String findIdContextual(String text) {
