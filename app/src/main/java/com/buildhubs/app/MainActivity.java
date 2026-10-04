@@ -38,14 +38,14 @@ import java.util.regex.Pattern;
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "BUILD_HUBS_PDF";
 
-    private static final String[] OWNER_LABELS = {"בעלים", "םילעב"};
-    private static final String[] ID_LABELS = {"תעודת זהות", "זהות תעודת", "ת.ז.", "ת.ז", "תז"};
-    private static final String[] VEHICLE_LABELS = {"מספר רכב", "רכב מספר", "רפסמ בכר", "בכר רפסמ"};
+    private static final String[] OWNER_LABELS = {"שם הבעלים", "בעלים", "םילעב"};
+    private static final String[] ID_LABELS = {"מס׳ זהות / ח״פ", "מס זהות", "תעודת זהות", "זהות תעודת", "ת.ז.", "ת.ז", "תז", "זהות"};
+    private static final String[] VEHICLE_LABELS = {"מס׳ רישוי", "מס' רישוי", "מס רישוי", "מספר רכב", "רכב מספר", "רישוי'מס", "רפסמ בכר", "בכר רפסמ"};
     private static final String[] ADDRESS_LABELS = {"מען", "כתובת", "ןעמ", "תבותכ"};
     private static final String[] YEAR_LABELS = {"שנת ייצור", "ייצור שנת", "תנש רוציי", "רוציי תנש"};
-    private static final String[] ENGINE_LABELS = {"נפח", "חפנ"};
-    private static final String[] MAKE_LABELS = {"תוצר", "רצות"};
-    private static final String[] VIN_LABELS = {"מספר שילדה", "שילדה מספר", "VIN", "רפסמ הדליש", "הדליש רפסמ"};
+    private static final String[] ENGINE_LABELS = {"נפח מנוע", "נפח", "חפנ"};
+    private static final String[] MAKE_LABELS = {"יצרן / דגם", "יצרן/דגם", "יצרן", "דגם", "תוצר", "דגם/ יצרן", "רצות"};
+    private static final String[] VIN_LABELS = {"מס׳ שילדה", "מס' שילדה", "מס שילדה", "מספר שילדה", "שילדה מספר", "VIN", "שילדה'מס", "רפסמ הדליש", "הדליש רפסמ"};
 
     private static final String[][] ALL_LABEL_GROUPS = {
             OWNER_LABELS, ID_LABELS, VEHICLE_LABELS, ADDRESS_LABELS,
@@ -226,6 +226,12 @@ public class MainActivity extends AppCompatActivity {
         f.engine = findNumberField(text, ENGINE_LABELS, NumberKind.ENGINE);
         f.make = findTextField(text, MAKE_LABELS, FieldKind.MAKE);
         f.vin = findVin(text);
+
+        // Final contextual fallback for PDFs that place several fields on one visual line.
+        if (isEmpty(f.id)) f.id = findIdContextual(text);
+        if (isEmpty(f.vehicle)) f.vehicle = findVehicleContextual(text);
+        if (isEmpty(f.make)) f.make = findMakeContextual(text);
+        if (isEmpty(f.vin)) f.vin = findVinContextual(text);
         return f;
     }
 
@@ -367,12 +373,121 @@ public class MainActivity extends AppCompatActivity {
         return plain.find() ? plain.group(1) : null;
     }
 
+    private String searchableText(String text) {
+        return normalizeText(text)
+                .replace('\n', ' ')
+                .replace('׳', '\'')
+                .replace('״', '"')
+                .replaceAll("[\\t ]+", " ")
+                .trim();
+    }
+
+    private String findIdContextual(String text) {
+        String t = searchableText(text);
+        String[] regexes = {
+                "(?:מס\\s*['.]?\\s*זהות|זהות\\s*תעודת|תעודת\\s*זהות|ת\\s*[.]?\\s*ז\\s*[.]?)[^0-9]{0,20}(\\d{7,9})\\s*[-–—]\\s*(\\d)",
+                "(\\d{7,9})\\s*[-–—]\\s*(\\d)[^0-9א-ת]{0,20}(?:מס\\s*['.]?\\s*זהות|זהות\\s*תעודת|תעודת\\s*זהות)"
+        };
+        for (String regex : regexes) {
+            Matcher m = Pattern.compile(regex, Pattern.CASE_INSENSITIVE).matcher(t);
+            if (m.find()) return m.group(1) + "-" + m.group(2);
+        }
+        return null;
+    }
+
+    private String findVehicleContextual(String text) {
+        String t = searchableText(text);
+        String[] regexes = {
+                "(?:מס\\s*['.]?\\s*רישוי|מספר\\s*רכב|רכב\\s*מספר|רישוי\\s*['.]?\\s*מס)[^0-9]{0,20}(\\d(?:[ .\\-–—]?\\d){6,7})(?!\\d)",
+                "(?<!\\d)(\\d(?:[ .\\-–—]?\\d){6,7})[^0-9א-ת]{0,20}(?:מס\\s*['.]?\\s*רישוי|מספר\\s*רכב|רכב\\s*מספר)"
+        };
+        for (String regex : regexes) {
+            Matcher m = Pattern.compile(regex, Pattern.CASE_INSENSITIVE).matcher(t);
+            if (m.find()) {
+                String digits = m.group(1).replaceAll("\\D", "");
+                if (digits.matches("\\d{7,8}")) return digits;
+            }
+        }
+        return null;
+    }
+
+    private String findMakeContextual(String text) {
+        String t = searchableText(text);
+        String label = "(?:יצרן\\s*/?\\s*דגם|דגם\\s*/?\\s*יצרן|תוצר)";
+        String next = "(?=\\s+(?:מס\\s*['.]?\\s*שילדה|מספר\\s*שילדה|שילדה\\s*['.]?\\s*מס|שילדה\\s*מספר|VIN)\\b|$)";
+        Matcher after = Pattern.compile(label + "\\s*[:\\-]?\\s*([א-תA-Za-z][א-תA-Za-z0-9 .\\-]{1,80}?)" + next,
+                Pattern.CASE_INSENSITIVE).matcher(t);
+        if (after.find()) return cleanValue(after.group(1));
+
+        Matcher before = Pattern.compile("([א-תA-Za-z][א-תA-Za-z0-9 .\\-]{1,80}?)\\s*" + label,
+                Pattern.CASE_INSENSITIVE).matcher(t);
+        String result = null;
+        while (before.find()) result = cleanValue(before.group(1));
+        return result;
+    }
+
+    private String findVinContextual(String text) {
+        String t = searchableText(text);
+        String label = "(?:מס\\s*['.]?\\s*שילדה|מספר\\s*שילדה|שילדה\\s*['.]?\\s*מס|שילדה\\s*מספר|VIN)";
+        Matcher after = Pattern.compile(label + "[^A-Za-z0-9]{0,20}([A-HJ-NPR-Z0-9]{10,25})(?![A-Za-z0-9])",
+                Pattern.CASE_INSENSITIVE).matcher(t);
+        if (after.find()) return after.group(1).toUpperCase(Locale.US);
+
+        Matcher before = Pattern.compile("(?<![A-Za-z0-9])([A-HJ-NPR-Z0-9]{10,25})[^A-Za-z0-9א-ת]{0,20}" + label,
+                Pattern.CASE_INSENSITIVE).matcher(t);
+        if (before.find()) return before.group(1).toUpperCase(Locale.US);
+        return null;
+    }
+
     private String findVin(String text) {
-        Matcher matcher = Pattern.compile("(?<![A-Za-z0-9])([A-HJ-NPR-Z0-9]{17})(?![A-Za-z0-9])",
-                Pattern.CASE_INSENSITIVE).matcher(normalizeText(text));
+        String normalized = normalizeText(text);
+        String[] lines = normalized.split("\\n", -1);
+
+        // VIN standard of 17 characters, if present anywhere in the document.
+        Matcher standard = Pattern.compile(
+                "(?<![A-Za-z0-9])([A-HJ-NPR-Z0-9]{17})(?![A-Za-z0-9])",
+                Pattern.CASE_INSENSITIVE
+        ).matcher(normalized);
+        while (standard.find()) {
+            String vin = standard.group(1).toUpperCase(Locale.US);
+            if (vin.matches(".*[A-Z].*")) return vin;
+        }
+
+        // Some Israeli source reports contain a shorter chassis identifier.
+        // Accept 10-25 alphanumeric characters only when adjacent to a chassis label.
+        for (int i = 0; i < lines.length; i++) {
+            String line = cleanLine(lines[i]);
+            for (String label : VIN_LABELS) {
+                int at = indexOfIgnoreCase(line, label);
+                if (at < 0) continue;
+
+                String vin = vinFrom(line.substring(at + label.length()));
+                if (vin != null) return vin;
+                vin = vinFrom(line.substring(0, at));
+                if (vin != null) return vin;
+
+                if (i + 1 < lines.length && !containsAnyLabel(lines[i + 1])) {
+                    vin = vinFrom(lines[i + 1]);
+                    if (vin != null) return vin;
+                }
+                if (i > 0 && !containsAnyLabel(lines[i - 1])) {
+                    vin = vinFrom(lines[i - 1]);
+                    if (vin != null) return vin;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String vinFrom(String value) {
+        if (isEmpty(value)) return null;
+        Matcher matcher = Pattern.compile(
+                "(?<![A-Za-z0-9])([A-HJ-NPR-Z0-9]{10,25})(?![A-Za-z0-9])",
+                Pattern.CASE_INSENSITIVE
+        ).matcher(value);
         while (matcher.find()) {
             String vin = matcher.group(1).toUpperCase(Locale.US);
-            if (vin.matches(".*[A-Z].*")) return vin;
+            if (vin.matches(".*[A-Z].*") && vin.matches(".*[0-9].*")) return vin;
         }
         return null;
     }
