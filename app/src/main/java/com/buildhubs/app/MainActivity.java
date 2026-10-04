@@ -6,7 +6,6 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
-import android.text.TextUtils;
 import android.view.*;
 import android.widget.*;
 
@@ -212,54 +211,91 @@ public class MainActivity extends AppCompatActivity {
 
     private Fields readFields(Uri uri) throws Exception {
 
-        InputStream in =
-                getContentResolver().openInputStream(uri);
+        Fields f = new Fields();
+        String text = "";
 
-        if (in == null) {
-            throw new Exception("לא ניתן לפתוח את PDF המקור.");
+        try (InputStream in =
+                     getContentResolver().openInputStream(uri)) {
+
+            if (in == null) {
+                throw new Exception(
+                        "לא ניתן לפתוח את PDF המקור."
+                );
+            }
+
+            try (PDDocument document =
+                         PDDocument.load(in)) {
+
+                if (document.getNumberOfPages() == 0) {
+                    throw new Exception(
+                            "PDF המקור ריק."
+                    );
+                }
+
+                PDFTextStripper stripper =
+                        new PDFTextStripper();
+
+                stripper.setSortByPosition(true);
+
+                text = stripper.getText(document);
+
+                String normalized =
+                        normalizeText(text);
+
+                if (!looksLikeVehicleDocument(normalized)) {
+
+                    PDFTextStripper fallback =
+                            new PDFTextStripper();
+
+                    fallback.setSortByPosition(false);
+
+                    String fallbackText =
+                            fallback.getText(document);
+
+                    if (fallbackText != null &&
+                            fallbackText.trim().length()
+                                    > normalized.length()) {
+
+                        text = fallbackText;
+                    }
+                }
+            }
         }
 
-        PDDocument document = PDDocument.load(in);
+        text = normalizeText(text);
 
-        PDFTextStripper stripper = new PDFTextStripper();
-        stripper.setSortByPosition(true);
+        f.owner =
+                findTextField(text, "בעלים");
 
-        String text1 = stripper.getText(document);
+        f.address =
+                findTextField(text, "מען");
 
-        PDFTextStripper stripper2 = new PDFTextStripper();
-        stripper2.setSortByPosition(false);
+        f.make =
+                findTextField(text, "תוצר");
 
-        String text2 = stripper2.getText(document);
+        f.id =
+                findId(text);
 
-        document.close();
-        in.close();
+        f.vehicle =
+                findNumberField(
+                        text,
+                        "מספר רכב"
+                );
 
-        String text = cleanText(text1 + "\n" + text2);
+        f.year =
+                findNumberField(
+                        text,
+                        "שנת ייצור"
+                );
 
-        Fields f = new Fields();
+        f.engine =
+                findNumberField(
+                        text,
+                        "נפח"
+                );
 
-        f.owner = findTextField(text, "בעלים");
-        f.address = findTextField(text, "מען");
-        f.make = findTextField(text, "תוצר");
-
-        f.id = findId(text);
-
-        f.vehicle = findNumberField(
-                text,
-                "מספר רכב"
-        );
-
-        f.year = findNumberField(
-                text,
-                "שנת ייצור"
-        );
-
-        f.engine = findNumberField(
-                text,
-                "נפח"
-        );
-
-        f.vin = findVinField(text);
+        f.vin =
+                findVinField(text);
 
         StringBuilder missing =
                 new StringBuilder();
@@ -302,6 +338,7 @@ public class MainActivity extends AppCompatActivity {
                     missing.toString();
 
             if (missingText.endsWith(", ")) {
+
                 missingText =
                         missingText.substring(
                                 0,
@@ -318,13 +355,46 @@ public class MainActivity extends AppCompatActivity {
         return f;
     }
 
-    private String cleanText(String text) {
+    private boolean looksLikeVehicleDocument(
+            String text
+    ) {
+
+        if (text == null) {
+            return false;
+        }
+
+        int found = 0;
+
+        String[] labels = {
+                "בעלים",
+                "מען",
+                "תוצר",
+                "מספר רכב",
+                "שנת ייצור",
+                "נפח",
+                "תעודת זהות",
+                "ת.ז",
+                "שילדה",
+                "VIN"
+        };
+
+        for (String label : labels) {
+
+            if (text.contains(label)) {
+                found++;
+            }
+        }
+
+        return found >= 2;
+    }
+
+    private String normalizeText(String text) {
 
         if (text == null) {
             return "";
         }
 
-        return text
+        text = text
                 .replace("\u200E", "")
                 .replace("\u200F", "")
                 .replace("\u202A", "")
@@ -336,151 +406,38 @@ public class MainActivity extends AppCompatActivity {
                 .replace("\u2067", "")
                 .replace("\u2069", "")
                 .replace('\u00A0', ' ')
-                .replaceAll("[ \\t]+", " ")
+                .replace('\u0000', ' ');
+
+        text = text
+                .replace("\r\n", "\n")
+                .replace('\r', '\n');
+
+        text = text.replaceAll(
+                "[ \\t]+",
+                " "
+        );
+
+        text = text.replaceAll(
+                " *\\n *",
+                "\n"
+        );
+
+        text = text.replaceAll(
+                "\\n{3,}",
+                "\n\n"
+        );
+
+        return text.trim();
+    }
+
+    private String cleanText(String text) {
+
+        return normalizeText(text)
+                .replace("\n", " ")
                 .trim();
     }
 
-private String findNumberField(String text, String label) {
-
-    if (text == null || text.isEmpty()) {
-        return null;
-    }
-
-    String t = normalizeText(text);
-
-    // צורה רגילה:
-    // מספר רכב 1234567
-    Pattern p = Pattern.compile(
-            Pattern.quote(label) +
-            "\\s*[:：\\-–—]?\\s*" +
-            "([0-9]{1,10})",
-            Pattern.CASE_INSENSITIVE
-    );
-
-    Matcher m = p.matcher(t);
-
-    if (m.find()) {
-        return m.group(1);
-    }
-
-    // צורה הפוכה:
-    // 1234567 מספר רכב
-    p = Pattern.compile(
-            "([0-9]{1,10})" +
-            "\\s+" +
-            Pattern.quote(label),
-            Pattern.CASE_INSENSITIVE
-    );
-
-    m = p.matcher(t);
-
-    if (m.find()) {
-        return m.group(1);
-    }
-
-    // תווית בשורה אחת והמספר בשורה הבאה
-    p = Pattern.compile(
-            Pattern.quote(label) +
-            "\\s*\\R\\s*" +
-            "([0-9]{1,10})",
-            Pattern.CASE_INSENSITIVE
-    );
-
-    m = p.matcher(t);
-
-    if (m.find()) {
-        return m.group(1);
-    }
-
-    return null;
-}
-
-        if (text == null || text.isEmpty()) {
-            return null;
-        }
-
-        String t = cleanText(text);
-
-        // צורה רגילה:
-        // תוצר טויוטה
-        Pattern p = Pattern.compile(
-                Pattern.quote(label) +
-                "\\s*[:\\-]?\\s*" +
-                "([^\\r\\n]+)"
-        );
-
-        Matcher m = p.matcher(t);
-
-        if (m.find()) {
-
-            String value = cleanText(m.group(1));
-
-            if (!isAnotherLabel(value)) {
-                return value;
-            }
-        }
-
-        // צורה בשתי שורות:
-        // תוצר
-        // טויוטה
-        p = Pattern.compile(
-                Pattern.quote(label) +
-                "\\s*\\R\\s*" +
-                "([^\\r\\n]+)"
-        );
-
-        m = p.matcher(t);
-
-        if (m.find()) {
-
-            String value = cleanText(m.group(1));
-
-            if (!isAnotherLabel(value)) {
-                return value;
-            }
-        }
-
-        // צורה הפוכה:
-        // טויוטה תוצר
-        p = Pattern.compile(
-                "([^\\r\\n]{1,60})" +
-                "\\s+" +
-                Pattern.quote(label)
-        );
-
-        m = p.matcher(t);
-
-        if (m.find()) {
-
-            String value = cleanText(m.group(1));
-
-            if (!isAnotherLabel(value)) {
-                return value;
-            }
-        }
-
-        return null;
-    }
-
-    private boolean isAnotherLabel(String value) {
-
-        if (value == null) {
-            return true;
-        }
-
-        String v = cleanText(value);
-
-        return v.equals("בעלים") ||
-                v.equals("מען") ||
-                v.equals("תוצר") ||
-                v.equals("תעודת זהות") ||
-                v.equals("מספר רכב") ||
-                v.equals("שנת ייצור") ||
-                v.equals("נפח") ||
-                v.contains("מספר שילדה");
-    }
-
-    private String findNumberField(
+    private String findTextField(
             String text,
             String label
     ) {
@@ -489,209 +446,556 @@ private String findNumberField(String text, String label) {
             return null;
         }
 
-        String t = cleanText(text);
+        String t =
+                normalizeText(text);
 
-        // צורה רגילה:
-        // נפח 1598
-        Pattern p = Pattern.compile(
-                Pattern.quote(label) +
-                "\\s*[:\\-]?\\s*" +
-                "([0-9]{2,10})"
-        );
+        /*
+         * צורה רגילה:
+         * מען הרצל 1 דירה 2 חולון
+         *
+         * תוצר טויוטה
+         */
+
+        Pattern p =
+                Pattern.compile(
+                        Pattern.quote(label) +
+                        "\\s*[:：\\-–—]?\\s*" +
+                        "([^\\r\\n]+)",
+                        Pattern.CASE_INSENSITIVE
+                );
 
         Matcher m = p.matcher(t);
 
         if (m.find()) {
-            return m.group(1);
+
+            String value =
+                    cleanFieldValue(m.group(1));
+
+            if (isValidTextValue(value)) {
+                return value;
+            }
         }
 
-        // צורה בשתי שורות:
-        // נפח
-        // 1598
+        /*
+         * צורה הפוכה:
+         *
+         * טויוטה תוצר
+         * הרצל 1 דירה 2 חולון מען
+         */
+
+        p = Pattern.compile(
+                "([^\\r\\n]{1,100})" +
+                "\\s+" +
+                Pattern.quote(label) +
+                "\\s*$",
+                Pattern.CASE_INSENSITIVE
+        );
+
+        m = p.matcher(t);
+
+        if (m.find()) {
+
+            String value =
+                    cleanFieldValue(m.group(1));
+
+            if (isValidTextValue(value)) {
+                return value;
+            }
+        }
+
+        /*
+         * תווית בשורה אחת,
+         * ערך בשורה הבאה.
+         */
+
         p = Pattern.compile(
                 Pattern.quote(label) +
                 "\\s*\\R\\s*" +
-                "([0-9]{2,10})"
+                "([^\\r\\n]+)",
+                Pattern.CASE_INSENSITIVE
         );
 
         m = p.matcher(t);
 
         if (m.find()) {
-            return m.group(1);
-        }
 
-        // צורה הפוכה:
-        // 1598 נפח
-        p = Pattern.compile(
-                "([0-9]{2,10})" +
-                "\\s*" +
-                Pattern.quote(label)
-        );
+            String value =
+                    cleanFieldValue(m.group(1));
 
-        m = p.matcher(t);
-
-        if (m.find()) {
-            return m.group(1);
-        }
-
-        return null;
-    }
-
-    private String findId(String text) {
-
-        Pattern[] patterns = {
-
-                Pattern.compile(
-                        "תעודת\\s*זהות\\s*" +
-                        "[:\\-]?\\s*" +
-                        "([0-9]{5,10}\\s*-\\s*[0-9]{1,3})"
-                ),
-
-                Pattern.compile(
-                        "ת\\.ז\\.\\s*" +
-                        "[:\\-]?\\s*" +
-                        "([0-9]{5,10}\\s*-\\s*[0-9]{1,3})"
-                ),
-
-                Pattern.compile(
-                        "\\b([0-9]{5,10}\\s*-\\s*[0-9]{1,3})\\b"
-                )
-        };
-
-        for (Pattern p : patterns) {
-
-            Matcher m = p.matcher(text);
-
-            if (m.find()) {
-
-                return m.group(1)
-                        .replaceAll("\\s+", "");
+            if (isValidTextValue(value)) {
+                return value;
             }
         }
 
         return null;
     }
-private String findVinField(String text) {
 
-    if (text == null || text.isEmpty()) {
-        return null;
-    }
+    private String cleanFieldValue(
+            String value
+    ) {
 
-    String t = normalizeText(text);
-
-    // מספר שילדה TMB...
-    Pattern p = Pattern.compile(
-            "מספר\\s*שילדה" +
-            "\\s*[:：\\-–—]?\\s*" +
-            "([A-Za-z0-9]{10,25})",
-            Pattern.CASE_INSENSITIVE
-    );
-
-    Matcher m = p.matcher(t);
-
-    if (m.find()) {
-        return m.group(1).toUpperCase();
-    }
-
-    // TMB... שילדה מספר
-    p = Pattern.compile(
-            "([A-Za-z0-9]{10,25})" +
-            "\\s+שילדה\\s+מספר",
-            Pattern.CASE_INSENSITIVE
-    );
-
-    m = p.matcher(t);
-
-    if (m.find()) {
-        return m.group(1).toUpperCase();
-    }
-
-    // שילדה מספר TMB...
-    p = Pattern.compile(
-            "שילדה\\s+מספר" +
-            "\\s*[:：\\-–—]?\\s*" +
-            "([A-Za-z0-9]{10,25})",
-            Pattern.CASE_INSENSITIVE
-    );
-
-    m = p.matcher(t);
-
-    if (m.find()) {
-        return m.group(1).toUpperCase();
-    }
-
-    // חיפוש VIN בן 17 תווים בכל הטקסט
-    Pattern vin17 = Pattern.compile(
-            "(?<![A-Za-z0-9])" +
-            "([A-HJ-NPR-Z0-9]{17})" +
-            "(?![A-Za-z0-9])",
-            Pattern.CASE_INSENSITIVE
-    );
-
-    m = vin17.matcher(t);
-
-    while (m.find()) {
-
-        String vin = m.group(1).toUpperCase();
-
-        if (vin.matches(".*[A-Z].*")) {
-            return vin;
-        }
-    }
-
-    return null;
+        if (value == null) {
+            return "";
         }
 
-        String t = cleanText(text);
+        return value
+                .replace("\n", " ")
+                .replaceAll(
+                        "^[\\s:：\\-–—]+",
+                        ""
+                )
+                .replaceAll(
+                        "[\\s:：\\-–—]+$",
+                        ""
+                )
+                .trim();
+    }
 
-        // צורה:
-        // מספר שילדה TMB...
-        Pattern p = Pattern.compile(
-                "מספר\\s*שילדה" +
-                "\\s*[:\\-]?\\s*" +
-                "([A-Za-z0-9]{10,25})",
-                Pattern.CASE_INSENSITIVE
-        );
+    private boolean isValidTextValue(
+            String value
+    ) {
+
+        if (value == null ||
+                value.trim().isEmpty()) {
+
+            return false;
+        }
+
+        String v = value.trim();
+
+        if (isKnownLabel(v)) {
+            return false;
+        }
+
+        String[] labels = {
+                "בעלים",
+                "מען",
+                "תוצר",
+                "תעודת זהות",
+                "ת.ז",
+                "מספר רכב",
+                "שנת ייצור",
+                "נפח",
+                "מספר שילדה",
+                "שילדה מספר",
+                "VIN"
+        };
+
+        for (String label : labels) {
+
+            if (v.startsWith(label + " ") ||
+                    v.startsWith(label + ":")) {
+
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private boolean isKnownLabel(
+            String value
+    ) {
+
+        if (value == null) {
+            return true;
+        }
+
+        String v = value.trim();
+
+        return v.equals("בעלים") ||
+                v.equals("מען") ||
+                v.equals("תוצר") ||
+                v.equals("תעודת זהות") ||
+                v.equals("ת.ז") ||
+                v.equals("מספר רכב") ||
+                v.equals("שנת ייצור") ||
+                v.equals("נפח") ||
+                v.equals("מספר שילדה") ||
+                v.equals("שילדה מספר") ||
+                v.equalsIgnoreCase("VIN");
+    }
+
+    private String findNumberField(
+            String text,
+            String label
+    ) {
+
+        if (text == null ||
+                text.isEmpty()) {
+
+            return null;
+        }
+
+        String t =
+                normalizeText(text);
+
+        /*
+         * צורה רגילה:
+         *
+         * מספר רכב 1234567
+         * שנת ייצור 2015
+         * נפח 1598
+         */
+
+        Pattern p =
+                Pattern.compile(
+                        Pattern.quote(label) +
+                        "\\s*[:：\\-–—]?\\s*" +
+                        "([0-9]{1,10})",
+                        Pattern.CASE_INSENSITIVE
+                );
 
         Matcher m = p.matcher(t);
 
         if (m.find()) {
-            return m.group(1);
+
+            String value =
+                    m.group(1);
+
+            if (isValidNumberForField(
+                    label,
+                    value)) {
+
+                return value;
+            }
         }
 
-        // צורה הפוכה:
-        // TMB... שילדה מספר
+        /*
+         * צורה הפוכה:
+         *
+         * 1234567 מספר רכב
+         * 2015 שנת ייצור
+         * 1598 נפח
+         */
+
         p = Pattern.compile(
-                "([A-Za-z0-9]{10,25})" +
-                "\\s+שילדה\\s+מספר",
+                "([0-9]{1,10})" +
+                "\\s+" +
+                Pattern.quote(label),
                 Pattern.CASE_INSENSITIVE
         );
 
         m = p.matcher(t);
 
         if (m.find()) {
-            return m.group(1);
+
+            String value =
+                    m.group(1);
+
+            if (isValidNumberForField(
+                    label,
+                    value)) {
+
+                return value;
+            }
         }
 
-        // צורה:
-        // שילדה מספר TMB...
+        /*
+         * תווית בשורה אחת,
+         * מספר בשורה הבאה.
+         */
+
         p = Pattern.compile(
-                "שילדה\\s+מספר" +
-                "\\s*[:\\-]?\\s*" +
-                "([A-Za-z0-9]{10,25})",
+                Pattern.quote(label) +
+                "\\s*\\R\\s*" +
+                "([0-9]{1,10})",
                 Pattern.CASE_INSENSITIVE
         );
 
         m = p.matcher(t);
 
         if (m.find()) {
-            return m.group(1);
+
+            String value =
+                    m.group(1);
+
+            if (isValidNumberForField(
+                    label,
+                    value)) {
+
+                return value;
+            }
         }
 
         return null;
     }
 
-    private boolean isEmpty(String s) {
+    private boolean isValidNumberForField(
+            String label,
+            String value
+    ) {
+
+        if (value == null ||
+                value.isEmpty()) {
+
+            return false;
+        }
+
+        try {
+
+            int n =
+                    Integer.parseInt(value);
+
+            if (label.equals("שנת ייצור")) {
+
+                return n >= 1900 &&
+                        n <= 2100;
+            }
+
+            if (label.equals("מספר רכב")) {
+
+                return value.length() >= 5 &&
+                        value.length() <= 9;
+            }
+
+            if (label.equals("נפח")) {
+
+                return value.length() >= 2 &&
+                        value.length() <= 6;
+            }
+
+            return true;
+
+        } catch (Exception e) {
+
+            return false;
+        }
+    }
+
+    private String findId(
+            String text
+    ) {
+
+        if (text == null) {
+            return null;
+        }
+
+        String[] patterns = {
+
+                "תעודת\\s*זהות\\s*" +
+                "[:：\\-]?\\s*" +
+                "(\\d{7,9})\\s*[-–]\\s*(\\d)",
+
+                "תעודת\\s*זהות\\s*" +
+                "[:：\\-]?\\s*" +
+                "(\\d{8,9})",
+
+                "ת\\.?\\s*ז\\.?\\s*" +
+                "[:：\\-]?\\s*" +
+                "(\\d{7,9})\\s*[-–]\\s*(\\d)",
+
+                "\\b(\\d{7,9})\\s*[-–]\\s*(\\d)\\b"
+        };
+
+        for (String regex : patterns) {
+
+            Matcher m =
+                    Pattern.compile(
+                            regex,
+                            Pattern.CASE_INSENSITIVE
+                    ).matcher(text);
+
+            if (m.find()) {
+
+                String first =
+                        m.group(1)
+                                .replaceAll(
+                                        "\\s+",
+                                        ""
+                                );
+
+                if (m.groupCount() >= 2 &&
+                        m.group(2) != null) {
+
+                    String second =
+                            m.group(2)
+                                    .replaceAll(
+                                            "\\s+",
+                                            ""
+                                    );
+
+                    if (!second.isEmpty()) {
+
+                        return first +
+                                "-" +
+                                second;
+                    }
+                }
+
+                return first;
+            }
+        }
+
+        return null;
+    }
+
+    private String findVinField(
+            String text
+    ) {
+
+        if (text == null ||
+                text.isEmpty()) {
+
+            return null;
+        }
+
+        String t =
+                normalizeText(text);
+
+        /*
+         * חיפוש VIN תקני בן 17 תווים.
+         */
+
+        Pattern vin17 =
+                Pattern.compile(
+                        "(?<![A-Za-z0-9])" +
+                        "([A-HJ-NPR-Z0-9]{17})" +
+                        "(?![A-Za-z0-9])",
+                        Pattern.CASE_INSENSITIVE
+                );
+
+        Matcher m =
+                vin17.matcher(t);
+
+        while (m.find()) {
+
+            String vin =
+                    m.group(1).toUpperCase();
+
+            if (vin.matches(
+                    ".*[A-Z].*"
+            )) {
+
+                return vin;
+            }
+        }
+
+        /*
+         * מספר שילדה TMB...
+         */
+
+        Pattern afterLabel =
+                Pattern.compile(
+                        "מספר\\s*שילדה" +
+                        "\\s*[:：\\-–—]?\\s*" +
+                        "([A-HJ-NPR-Z0-9]{10,25})",
+                        Pattern.CASE_INSENSITIVE
+                );
+
+        m = afterLabel.matcher(t);
+
+        if (m.find()) {
+
+            return m.group(1)
+                    .toUpperCase();
+        }
+
+        /*
+         * TMB... שילדה מספר
+         */
+
+        Pattern beforeLabel =
+                Pattern.compile(
+                        "([A-HJ-NPR-Z0-9]{10,25})" +
+                        "\\s+שילדה\\s+מספר",
+                        Pattern.CASE_INSENSITIVE
+                );
+
+        m = beforeLabel.matcher(t);
+
+        if (m.find()) {
+
+            return m.group(1)
+                    .toUpperCase();
+        }
+
+        /*
+         * שילדה מספר TMB...
+         */
+
+        Pattern reversed =
+                Pattern.compile(
+                        "שילדה\\s+מספר" +
+                        "\\s*[:：\\-–—]?\\s*" +
+                        "([A-HJ-NPR-Z0-9]{10,25})",
+                        Pattern.CASE_INSENSITIVE
+                );
+
+        m = reversed.matcher(t);
+
+        if (m.find()) {
+
+            return m.group(1)
+                    .toUpperCase();
+        }
+
+        /*
+         * ניסיון אחרון לפי שורות.
+         */
+
+        String[] lines =
+                t.split("\\n");
+
+        for (int i = 0;
+             i < lines.length;
+             i++) {
+
+            String line =
+                    lines[i].trim();
+
+            if (!line.contains("שילדה")) {
+                continue;
+            }
+
+            Matcher candidate =
+                    Pattern.compile(
+                            "([A-HJ-NPR-Z0-9]{10,25})",
+                            Pattern.CASE_INSENSITIVE
+                    ).matcher(line);
+
+            if (candidate.find()) {
+
+                String vin =
+                        candidate.group(1)
+                                .toUpperCase();
+
+                if (vin.matches(
+                        ".*[A-Z].*"
+                )) {
+
+                    return vin;
+                }
+            }
+
+            if (i + 1 < lines.length) {
+
+                candidate =
+                        Pattern.compile(
+                                "^\\s*" +
+                                "([A-HJ-NPR-Z0-9]{10,25})" +
+                                "\\s*$",
+                                Pattern.CASE_INSENSITIVE
+                        ).matcher(
+                                lines[i + 1]
+                        );
+
+                if (candidate.find()) {
+
+                    return candidate
+                            .group(1)
+                            .toUpperCase();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private boolean isEmpty(
+            String s
+    ) {
+
         return s == null ||
                 s.trim().isEmpty();
     }
@@ -703,90 +1007,152 @@ private String findVinField(String text) {
     ) throws Exception {
 
         InputStream in =
-                getContentResolver().openInputStream(uri);
+                getContentResolver()
+                        .openInputStream(uri);
 
         if (in == null) {
-            throw new Exception("לא ניתן לפתוח את PDF היעד.");
+
+            throw new Exception(
+                    "לא ניתן לפתוח את PDF היעד."
+            );
         }
 
-        PDDocument document = PDDocument.load(in);
+        PDDocument document =
+                PDDocument.load(in);
+
         in.close();
 
         if (document.getNumberOfPages() == 0) {
+
             document.close();
-            throw new Exception("PDF היעד ריק.");
+
+            throw new Exception(
+                    "PDF היעד ריק."
+            );
         }
 
-        PDPage page = document.getPage(0);
+        PDPage page =
+                document.getPage(0);
 
-        PDType0Font font = PDType0Font.load(
-                document,
-                getAssets().open("DejaVuSans.ttf"),
-                true
-        );
+        PDType0Font font =
+                PDType0Font.load(
+                        document,
+                        getAssets().open(
+                                "DejaVuSans.ttf"
+                        ),
+                        true
+                );
 
         // מספר רישוי
         coverAndText(
-                document, page, font,
+                document,
+                page,
+                font,
                 f.vehicle,
-                340, 602, 396, 625,
-                9, false
+                340,
+                602,
+                396,
+                625,
+                9,
+                false
         );
 
         // מספר זהות
         coverAndText(
-                document, page, font,
+                document,
+                page,
+                font,
                 f.id,
-                265, 576, 335, 599,
-                9, false
+                265,
+                576,
+                335,
+                599,
+                9,
+                false
         );
 
         // שם בעל הפוליסה
         coverAndText(
-                document, page, font,
+                document,
+                page,
+                font,
                 f.owner,
-                465, 576, 568, 599,
-                9, true
+                465,
+                576,
+                568,
+                599,
+                9,
+                true
         );
 
         // כתובת בעל הפוליסה
         coverAndText(
-                document, page, font,
+                document,
+                page,
+                font,
                 f.address,
-                440, 552, 568, 574,
-                8, true
+                440,
+                552,
+                568,
+                574,
+                8,
+                true
         );
 
         // שנת ייצור
         coverAndText(
-                document, page, font,
+                document,
+                page,
+                font,
                 f.year,
-                84, 518, 120, 538,
-                9, false
+                84,
+                518,
+                120,
+                538,
+                9,
+                false
         );
 
         // נפח מנוע
         coverAndText(
-                document, page, font,
+                document,
+                page,
+                font,
                 f.engine,
-                185, 518, 235, 538,
-                9, false
+                185,
+                518,
+                235,
+                538,
+                9,
+                false
         );
 
         // שם היצרן והדגם
         coverAndText(
-                document, page, font,
+                document,
+                page,
+                font,
                 f.make,
-                245, 518, 330, 538,
-                8, true
+                245,
+                518,
+                330,
+                538,
+                8,
+                true
         );
 
         // מספר שילדה
         coverAndText(
-                document, page, font,
+                document,
+                page,
+                font,
                 f.vin,
-                465, 518, 560, 538,
-                7, false
+                465,
+                518,
+                560,
+                538,
+                7,
+                false
         );
 
         // השורה הגדולה בתחתית
@@ -798,10 +1164,16 @@ private String findVinField(String text) {
                 " בלבד";
 
         coverAndText(
-                document, page, font,
+                document,
+                page,
+                font,
                 bottomText,
-                100, 445, 450, 487,
-                22, true
+                100,
+                445,
+                450,
+                487,
+                22,
+                true
         );
 
         document.save(out);
@@ -821,11 +1193,12 @@ private String findVinField(String text) {
             boolean rtl
     ) throws Exception {
 
-        if (text == null) {
+        if (isEmpty(text)) {
             return;
         }
 
-        text = cleanText(text);
+        text =
+                cleanFieldValue(text);
 
         if (text.isEmpty()) {
             return;
@@ -840,94 +1213,140 @@ private String findVinField(String text) {
                         true
                 );
 
-        // מחיקת הערך הישן
-        // PDFBox דורש ערכי RGB בין 0 ל-255
-        cs.setNonStrokingColor(
-                255,
-                255,
-                255
-        );
+        try {
 
-        cs.addRect(
-                x0,
-                y0,
-                x1 - x0,
-                y1 - y0
-        );
+            /*
+             * חשוב:
+             * לא להשתמש כאן ב-Color.WHITE
+             * כי PDFBox מצפה לערכי RGB.
+             */
 
-        cs.fill();
+            cs.setNonStrokingColor(
+                    255,
+                    255,
+                    255
+            );
 
-        // כתיבת הערך החדש
-        cs.beginText();
+            cs.addRect(
+                    x0,
+                    y0,
+                    x1 - x0,
+                    y1 - y0
+            );
 
-        // PDFBox דורש ערכי RGB בין 0 ל-255
-        cs.setNonStrokingColor(
-                0,
-                0,
-                0
-        );
+            cs.fill();
 
-        cs.setFont(font, size);
+            String visualText =
+                    text;
 
-        String visualText = text;
+            if (rtl) {
 
-        if (rtl) {
+                try {
 
-            try {
+                    Bidi bidi =
+                            new Bidi(
+                                    text,
+                                    Bidi.DIRECTION_RIGHT_TO_LEFT
+                            );
 
-                Bidi bidi = new Bidi(
-                        text,
-                        Bidi.DIRECTION_RIGHT_TO_LEFT
-                );
+                    visualText =
+                            bidi.writeReordered(
+                                    Bidi.DO_MIRRORING
+                            );
 
-                visualText =
-                        bidi.writeReordered(
-                                Bidi.DO_MIRRORING
+                } catch (Exception ignored) {
+                }
+            }
+
+            float availableWidth =
+                    x1 - x0;
+
+            float drawSize =
+                    size;
+
+            while (drawSize > 5f) {
+
+                float width =
+                        font.getStringWidth(
+                                visualText
+                        )
+                        / 1000f
+                        * drawSize;
+
+                if (width <= availableWidth) {
+                    break;
+                }
+
+                drawSize -= 0.5f;
+            }
+
+            float textWidth =
+                    font.getStringWidth(
+                            visualText
+                    )
+                    / 1000f
+                    * drawSize;
+
+            float tx;
+
+            if (rtl) {
+
+                tx =
+                        x1 -
+                        Math.min(
+                                textWidth,
+                                availableWidth
                         );
 
-            } catch (Exception ignored) {
+            } else {
+
+                tx = x0;
             }
+
+            float ty =
+                    y0 +
+                    ((y1 - y0 - drawSize)
+                            / 2f) +
+                    (drawSize * 0.72f);
+
+            cs.beginText();
+
+            /*
+             * חשוב:
+             * גם כאן RGB ולא Color.BLACK.
+             */
+
+            cs.setNonStrokingColor(
+                    0,
+                    0,
+                    0
+            );
+
+            cs.setFont(
+                    font,
+                    drawSize
+            );
+
+            cs.newLineAtOffset(
+                    tx,
+                    ty
+            );
+
+            cs.showText(
+                    visualText
+            );
+
+            cs.endText();
+
+        } finally {
+
+            cs.close();
         }
-
-        float textWidth =
-                font.getStringWidth(visualText)
-                / 1000f
-                * size;
-
-        float availableWidth =
-                x1 - x0;
-
-        float tx;
-
-        if (rtl) {
-
-            tx =
-                    x1 -
-                    Math.min(
-                            textWidth,
-                            availableWidth
-                    );
-
-        } else {
-
-            tx = x0;
-        }
-
-        float ty =
-                y0 +
-                ((y1 - y0 - size) / 2f) +
-                (size * 0.72f);
-
-        cs.newLineAtOffset(tx, ty);
-
-        cs.showText(visualText);
-
-        cs.endText();
-
-        cs.close();
     }
 
-    private void share(File file) {
+    private void share(
+            File file
+    ) {
 
         try {
 
@@ -940,9 +1359,13 @@ private String findVinField(String text) {
                     );
 
             Intent intent =
-                    new Intent(Intent.ACTION_SEND);
+                    new Intent(
+                            Intent.ACTION_SEND
+                    );
 
-            intent.setType("application/pdf");
+            intent.setType(
+                    "application/pdf"
+            );
 
             intent.putExtra(
                     Intent.EXTRA_STREAM,
