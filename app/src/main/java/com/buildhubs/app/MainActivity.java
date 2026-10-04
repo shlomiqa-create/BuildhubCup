@@ -340,10 +340,60 @@ public class MainActivity extends AppCompatActivity {
                 .trim();
     }
 
-    private String findTextField(
-            String text,
-            String label
-    ) {
+private String findNumberField(String text, String label) {
+
+    if (text == null || text.isEmpty()) {
+        return null;
+    }
+
+    String t = normalizeText(text);
+
+    // צורה רגילה:
+    // מספר רכב 1234567
+    Pattern p = Pattern.compile(
+            Pattern.quote(label) +
+            "\\s*[:：\\-–—]?\\s*" +
+            "([0-9]{1,10})",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    Matcher m = p.matcher(t);
+
+    if (m.find()) {
+        return m.group(1);
+    }
+
+    // צורה הפוכה:
+    // 1234567 מספר רכב
+    p = Pattern.compile(
+            "([0-9]{1,10})" +
+            "\\s+" +
+            Pattern.quote(label),
+            Pattern.CASE_INSENSITIVE
+    );
+
+    m = p.matcher(t);
+
+    if (m.find()) {
+        return m.group(1);
+    }
+
+    // תווית בשורה אחת והמספר בשורה הבאה
+    p = Pattern.compile(
+            Pattern.quote(label) +
+            "\\s*\\R\\s*" +
+            "([0-9]{1,10})",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    m = p.matcher(t);
+
+    if (m.find()) {
+        return m.group(1);
+    }
+
+    return null;
+}
 
         if (text == null || text.isEmpty()) {
             return null;
