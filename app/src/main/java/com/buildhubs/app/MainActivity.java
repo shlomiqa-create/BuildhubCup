@@ -1,13 +1,17 @@
 package com.buildhubs.app;
 
-import android.app.*;
-import android.content.*;
+import android.content.Intent;
 import android.graphics.Color;
+import android.icu.text.Bidi;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
-import android.view.*;
-import android.widget.*;
+import android.util.Log;
+import android.view.Gravity;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.Space;
+import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -22,35 +26,66 @@ import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import android.icu.text.Bidi;
-
 public class MainActivity extends AppCompatActivity {
+    private static final String TAG = "BUILD_HUBS_PDF";
+
+    private static final String[] OWNER_LABELS = {"בעלים", "םילעב"};
+    private static final String[] ID_LABELS = {"תעודת זהות", "זהות תעודת", "ת.ז.", "ת.ז", "תז"};
+    private static final String[] VEHICLE_LABELS = {"מספר רכב", "רכב מספר", "רפסמ בכר", "בכר רפסמ"};
+    private static final String[] ADDRESS_LABELS = {"מען", "כתובת", "ןעמ", "תבותכ"};
+    private static final String[] YEAR_LABELS = {"שנת ייצור", "ייצור שנת", "תנש רוציי", "רוציי תנש"};
+    private static final String[] ENGINE_LABELS = {"נפח", "חפנ"};
+    private static final String[] MAKE_LABELS = {"תוצר", "רצות"};
+    private static final String[] VIN_LABELS = {"מספר שילדה", "שילדה מספר", "VIN", "רפסמ הדליש", "הדליש רפסמ"};
+
+    private static final String[][] ALL_LABEL_GROUPS = {
+            OWNER_LABELS, ID_LABELS, VEHICLE_LABELS, ADDRESS_LABELS,
+            YEAR_LABELS, ENGINE_LABELS, MAKE_LABELS, VIN_LABELS
+    };
 
     private Uri sourceUri;
     private Uri targetUri;
-
     private TextView sourceLabel;
     private TextView targetLabel;
     private TextView status;
-
     private ActivityResultLauncher<String[]> picker;
     private boolean pickingSource;
 
     @Override
-    public void onCreate(Bundle b) {
-        super.onCreate(b);
-
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
         PDFBoxResourceLoader.init(getApplicationContext());
-
+        registerPicker();
         buildUi();
     }
 
-    private void buildUi() {
+    private void registerPicker() {
+        picker = registerForActivityResult(new ActivityResultContracts.OpenDocument(), uri -> {
+            if (uri == null) return;
+            try {
+                getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) { }
 
+            if (pickingSource) {
+                sourceUri = uri;
+                sourceLabel.setText("מקור: " + displayName(uri));
+            } else {
+                targetUri = uri;
+                targetLabel.setText("יעד: " + displayName(uri));
+            }
+        });
+    }
+
+    private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(28, 30, 28, 28);
@@ -61,1341 +96,458 @@ public class MainActivity extends AppCompatActivity {
         title.setTextSize(30);
         title.setTextColor(Color.rgb(13, 91, 120));
         title.setGravity(Gravity.CENTER);
-
-        root.addView(title,
-                new LinearLayout.LayoutParams(-1, 70));
+        root.addView(title, new LinearLayout.LayoutParams(-1, 70));
 
         TextView sub = new TextView(this);
         sub.setText("העתקת שדות מ-PDF מקור אל טופס PDF");
         sub.setTextSize(18);
         sub.setGravity(Gravity.CENTER);
-
-        root.addView(sub,
-                new LinearLayout.LayoutParams(-1, 60));
+        root.addView(sub, new LinearLayout.LayoutParams(-1, 60));
 
         sourceLabel = label("לא נבחר PDF מקור");
         root.addView(sourceLabel);
-
-        Button s = button("1. בחירת PDF מקור");
-
-        s.setOnClickListener(v -> {
+        Button sourceButton = button("1. בחירת PDF מקור");
+        sourceButton.setOnClickListener(v -> {
             pickingSource = true;
             picker.launch(new String[]{"application/pdf"});
         });
-
-        root.addView(s);
+        root.addView(sourceButton);
 
         targetLabel = label("לא נבחר PDF יעד");
         root.addView(targetLabel);
-
-        Button t = button("2. בחירת PDF יעד / טופס");
-
-        t.setOnClickListener(v -> {
+        Button targetButton = button("2. בחירת PDF יעד / טופס");
+        targetButton.setOnClickListener(v -> {
             pickingSource = false;
             picker.launch(new String[]{"application/pdf"});
         });
+        root.addView(targetButton);
 
-        root.addView(t);
+        root.addView(new Space(this), new LinearLayout.LayoutParams(1, 24));
+        Button createButton = button("3. יצירת PDF חדש");
+        createButton.setOnClickListener(v -> create());
+        root.addView(createButton);
 
-        Space sp = new Space(this);
-        root.addView(sp,
-                new LinearLayout.LayoutParams(1, 24));
-
-        Button make = button("3. יצירת PDF חדש");
-
-        make.setOnClickListener(v -> create());
-
-        root.addView(make);
-
-        status = label(
-                "הערכים שיועתקו: בעלים, ת.ז., מספר רכב, מען, שנת ייצור, נפח, תוצר ומספר שילדה."
-        );
-
+        status = label("הערכים שיועתקו: בעלים, ת.ז., מספר רכב, מען, שנת ייצור, נפח, תוצר ומספר שילדה.");
         root.addView(status);
-
         setContentView(root);
-
-        picker = registerForActivityResult(
-                new ActivityResultContracts.OpenDocument(),
-                uri -> {
-                    if (uri != null) {
-
-                        try {
-                            getContentResolver()
-                                    .takePersistableUriPermission(
-                                            uri,
-                                            Intent.FLAG_GRANT_READ_URI_PERMISSION
-                                    );
-                        } catch (Exception ignored) {
-                        }
-
-                        if (pickingSource) {
-                            sourceUri = uri;
-                            sourceLabel.setText(
-                                    "מקור: " +
-                                    uri.getLastPathSegment()
-                            );
-                        } else {
-                            targetUri = uri;
-                            targetLabel.setText(
-                                    "יעד: " +
-                                    uri.getLastPathSegment()
-                            );
-                        }
-                    }
-                }
-        );
     }
 
-    private TextView label(String s) {
-
-        TextView v = new TextView(this);
-        v.setText(s);
-        v.setTextSize(16);
-        v.setPadding(4, 12, 4, 12);
-
-        return v;
+    private TextView label(String text) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(16);
+        view.setPadding(4, 12, 4, 12);
+        return view;
     }
 
-    private Button button(String s) {
+    private Button button(String text) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextSize(16);
+        return button;
+    }
 
-        Button b = new Button(this);
-        b.setText(s);
-        b.setTextSize(16);
-
-        return b;
+    private String displayName(Uri uri) {
+        String name = uri.getLastPathSegment();
+        return name == null ? uri.toString() : name;
     }
 
     private void create() {
-
         if (sourceUri == null || targetUri == null) {
-
-            status.setText(
-                    "יש לבחור גם PDF מקור וגם PDF יעד."
-            );
-
+            status.setText("יש לבחור גם PDF מקור וגם PDF יעד.");
             return;
         }
 
         status.setText("קורא את PDF המקור...");
-
         try {
-
-            Fields f = readFields(sourceUri);
-
-            File out = new File(
-                    getExternalFilesDir(
-                            Environment.DIRECTORY_DOCUMENTS
-                    ),
-                    "BuildHubs_" +
-                    System.currentTimeMillis() +
-                    ".pdf"
-            );
-
-            editTarget(targetUri, out, f);
-
-            status.setText(
-                    "נוצר PDF חדש בהצלחה:\n" +
-                    out.getAbsolutePath()
-            );
-
-            share(out);
-
+            Fields fields = readFields(sourceUri);
+            File directory = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+            if (directory == null) directory = getFilesDir();
+            File output = new File(directory, "BuildHubs_" + System.currentTimeMillis() + ".pdf");
+            editTarget(targetUri, output, fields);
+            status.setText("נוצר PDF חדש בהצלחה:\n" + output.getAbsolutePath());
+            share(output);
         } catch (Exception e) {
-
-            status.setText(
-                    "שגיאה: " + e.getMessage()
-            );
+            Log.e(TAG, "Operation failed", e);
+            status.setText("שגיאה: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
         }
     }
 
     private Fields readFields(Uri uri) throws Exception {
+        String sortedText;
+        String unsortedText;
 
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new Exception("לא ניתן לפתוח את PDF המקור.");
+            try (PDDocument document = PDDocument.load(input)) {
+                if (document.getNumberOfPages() == 0) throw new Exception("PDF המקור ריק.");
+
+                PDFTextStripper sortedStripper = new PDFTextStripper();
+                sortedStripper.setSortByPosition(true);
+                sortedText = normalizeText(sortedStripper.getText(document));
+
+                PDFTextStripper unsortedStripper = new PDFTextStripper();
+                unsortedStripper.setSortByPosition(false);
+                unsortedText = normalizeText(unsortedStripper.getText(document));
+            }
+        }
+
+        Log.d(TAG, "===== SORTED TEXT =====\n" + sortedText);
+        Log.d(TAG, "===== UNSORTED TEXT =====\n" + unsortedText);
+        saveDebugText(sortedText, unsortedText);
+
+        Fields fields = mergeFields(extractFields(sortedText), extractFields(unsortedText));
+        Log.d(TAG, fields.toDebugString());
+
+        List<String> missing = new ArrayList<>();
+        if (isEmpty(fields.owner)) missing.add("בעלים");
+        if (isEmpty(fields.id)) missing.add("תעודת זהות");
+        if (isEmpty(fields.vehicle)) missing.add("מספר רכב");
+        if (isEmpty(fields.address)) missing.add("מען");
+        if (isEmpty(fields.year)) missing.add("שנת ייצור");
+        if (isEmpty(fields.engine)) missing.add("נפח");
+        if (isEmpty(fields.make)) missing.add("תוצר");
+        if (isEmpty(fields.vin)) missing.add("מספר שילדה");
+
+        if (!missing.isEmpty()) {
+            throw new Exception("לא הצלחתי לזהות את השדות: " + join(missing) +
+                    "\nנשמר קובץ אבחון: BuildHubs_ExtractedText.txt");
+        }
+        return fields;
+    }
+
+    private Fields extractFields(String text) {
         Fields f = new Fields();
-        String text = "";
-
-        try (InputStream in =
-                     getContentResolver().openInputStream(uri)) {
-
-            if (in == null) {
-                throw new Exception(
-                        "לא ניתן לפתוח את PDF המקור."
-                );
-            }
-
-            try (PDDocument document =
-                         PDDocument.load(in)) {
-
-                if (document.getNumberOfPages() == 0) {
-                    throw new Exception(
-                            "PDF המקור ריק."
-                    );
-                }
-
-                PDFTextStripper stripper =
-                        new PDFTextStripper();
-
-                stripper.setSortByPosition(true);
-
-                text = stripper.getText(document);
-
-                String normalized =
-                        normalizeText(text);
-
-                if (!looksLikeVehicleDocument(normalized)) {
-
-                    PDFTextStripper fallback =
-                            new PDFTextStripper();
-
-                    fallback.setSortByPosition(false);
-
-                    String fallbackText =
-                            fallback.getText(document);
-
-                    if (fallbackText != null &&
-                            fallbackText.trim().length()
-                                    > normalized.length()) {
-
-                        text = fallbackText;
-                    }
-                }
-            }
-        }
-
-        text = normalizeText(text);
-
-        f.owner =
-                findTextField(text, "בעלים");
-
-        f.address =
-                findTextField(text, "מען");
-
-        f.make =
-                findTextField(text, "תוצר");
-
-        f.id =
-                findId(text);
-
-        f.vehicle =
-                findNumberField(
-                        text,
-                        "מספר רכב"
-                );
-
-        f.year =
-                findNumberField(
-                        text,
-                        "שנת ייצור"
-                );
-
-        f.engine =
-                findNumberField(
-                        text,
-                        "נפח"
-                );
-
-        f.vin =
-                findVinField(text);
-
-        StringBuilder missing =
-                new StringBuilder();
-
-        if (isEmpty(f.owner)) {
-            missing.append("בעלים, ");
-        }
-
-        if (isEmpty(f.id)) {
-            missing.append("תעודת זהות, ");
-        }
-
-        if (isEmpty(f.vehicle)) {
-            missing.append("מספר רכב, ");
-        }
-
-        if (isEmpty(f.address)) {
-            missing.append("מען, ");
-        }
-
-        if (isEmpty(f.year)) {
-            missing.append("שנת ייצור, ");
-        }
-
-        if (isEmpty(f.engine)) {
-            missing.append("נפח, ");
-        }
-
-        if (isEmpty(f.make)) {
-            missing.append("תוצר, ");
-        }
-
-        if (isEmpty(f.vin)) {
-            missing.append("מספר שילדה, ");
-        }
-
-        if (missing.length() > 0) {
-
-            String missingText =
-                    missing.toString();
-
-            if (missingText.endsWith(", ")) {
-
-                missingText =
-                        missingText.substring(
-                                0,
-                                missingText.length() - 2
-                        );
-            }
-
-            throw new Exception(
-                    "לא הצלחתי לזהות את השדות: " +
-                    missingText
-            );
-        }
-
+        f.owner = findTextField(text, OWNER_LABELS, FieldKind.OWNER);
+        f.id = findId(text);
+        f.vehicle = findNumberField(text, VEHICLE_LABELS, NumberKind.VEHICLE);
+        f.address = findTextField(text, ADDRESS_LABELS, FieldKind.ADDRESS);
+        f.year = findNumberField(text, YEAR_LABELS, NumberKind.YEAR);
+        f.engine = findNumberField(text, ENGINE_LABELS, NumberKind.ENGINE);
+        f.make = findTextField(text, MAKE_LABELS, FieldKind.MAKE);
+        f.vin = findVin(text);
         return f;
     }
 
-    private boolean looksLikeVehicleDocument(
-            String text
-    ) {
+    private Fields mergeFields(Fields a, Fields b) {
+        Fields f = new Fields();
+        f.owner = first(a.owner, b.owner);
+        f.id = first(a.id, b.id);
+        f.vehicle = first(a.vehicle, b.vehicle);
+        f.address = first(a.address, b.address);
+        f.year = first(a.year, b.year);
+        f.engine = first(a.engine, b.engine);
+        f.make = first(a.make, b.make);
+        f.vin = first(a.vin, b.vin);
+        return f;
+    }
 
-        if (text == null) {
-            return false;
-        }
+    private String findTextField(String text, String[] labels, FieldKind kind) {
+        String[] lines = normalizeText(text).split("\\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = cleanLine(lines[i]);
+            for (String label : labels) {
+                int at = indexOfIgnoreCase(line, label);
+                if (at < 0) continue;
 
-        int found = 0;
+                String before = trimOtherLabels(cleanValue(line.substring(0, at)));
+                String after = trimOtherLabels(cleanValue(line.substring(at + label.length())));
+                if (validText(after, kind)) return after;
+                if (validText(before, kind)) return before;
 
-        String[] labels = {
-                "בעלים",
-                "מען",
-                "תוצר",
-                "מספר רכב",
-                "שנת ייצור",
-                "נפח",
-                "תעודת זהות",
-                "ת.ז",
-                "שילדה",
-                "VIN"
-        };
-
-        for (String label : labels) {
-
-            if (text.contains(label)) {
-                found++;
+                String next = nearbyText(lines, i, 1, kind);
+                if (next != null) return next;
+                String previous = nearbyText(lines, i, -1, kind);
+                if (previous != null) return previous;
             }
         }
+        return null;
+    }
 
-        return found >= 2;
+    private String nearbyText(String[] lines, int base, int direction, FieldKind kind) {
+        for (int distance = 1; distance <= 2; distance++) {
+            int index = base + direction * distance;
+            if (index < 0 || index >= lines.length) break;
+            String value = cleanValue(lines[index]);
+            if (value.isEmpty()) continue;
+            if (containsAnyLabel(value)) break;
+            if (validText(value, kind)) return value;
+        }
+        return null;
+    }
+
+    private boolean validText(String value, FieldKind kind) {
+        if (isEmpty(value) || containsAnyLabel(value) || !Pattern.compile("\\p{L}").matcher(value).find()) return false;
+        int max = kind == FieldKind.ADDRESS ? 150 : (kind == FieldKind.OWNER ? 100 : 80);
+        return value.length() >= 2 && value.length() <= max;
+    }
+
+    private String findNumberField(String text, String[] labels, NumberKind kind) {
+        String[] lines = normalizeText(text).split("\\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = cleanLine(lines[i]);
+            for (String label : labels) {
+                int at = indexOfIgnoreCase(line, label);
+                if (at < 0) continue;
+
+                String value = numberFrom(line.substring(at + label.length()), kind);
+                if (value != null) return value;
+                value = numberFrom(line.substring(0, at), kind);
+                if (value != null) return value;
+
+                value = nearbyNumber(lines, i, 1, kind);
+                if (value != null) return value;
+                value = nearbyNumber(lines, i, -1, kind);
+                if (value != null) return value;
+            }
+        }
+        return null;
+    }
+
+    private String nearbyNumber(String[] lines, int base, int direction, NumberKind kind) {
+        for (int distance = 1; distance <= 2; distance++) {
+            int index = base + direction * distance;
+            if (index < 0 || index >= lines.length) break;
+            String line = cleanLine(lines[index]);
+            if (line.isEmpty()) continue;
+            if (containsAnyLabel(line)) break;
+            String value = numberFrom(line, kind);
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private String numberFrom(String value, NumberKind kind) {
+        if (isEmpty(value)) return null;
+        Matcher matcher = Pattern.compile("(?<!\\d)(\\d(?:[ .\\-–—]?\\d){1,9})(?!\\d)").matcher(value);
+        while (matcher.find()) {
+            String digits = matcher.group(1).replaceAll("\\D", "");
+            if (kind == NumberKind.VEHICLE && digits.matches("\\d{7,8}")) return digits;
+            if (kind == NumberKind.YEAR && digits.matches("\\d{4}")) {
+                int year = Integer.parseInt(digits);
+                if (year >= 1900 && year <= 2100) return digits;
+            }
+            if (kind == NumberKind.ENGINE && digits.matches("\\d{2,6}")) {
+                int engine = Integer.parseInt(digits);
+                if (engine >= 50 && engine <= 20000) return digits;
+            }
+        }
+        return null;
+    }
+
+    private String findId(String text) {
+        String[] lines = normalizeText(text).split("\\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = cleanLine(lines[i]);
+            for (String label : ID_LABELS) {
+                int at = indexOfIgnoreCase(line, label);
+                if (at < 0) continue;
+                String id = idFrom(line.substring(at + label.length()));
+                if (id != null) return id;
+                id = idFrom(line.substring(0, at));
+                if (id != null) return id;
+                if (i + 1 < lines.length && !containsAnyLabel(lines[i + 1])) {
+                    id = idFrom(lines[i + 1]);
+                    if (id != null) return id;
+                }
+                if (i > 0 && !containsAnyLabel(lines[i - 1])) {
+                    id = idFrom(lines[i - 1]);
+                    if (id != null) return id;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String idFrom(String value) {
+        if (isEmpty(value)) return null;
+        Matcher hyphenated = Pattern.compile("(?<!\\d)(\\d{7,9})\\s*[-–—]\\s*(\\d)(?!\\d)").matcher(value);
+        if (hyphenated.find()) return hyphenated.group(1) + "-" + hyphenated.group(2);
+        Matcher plain = Pattern.compile("(?<!\\d)(\\d{8,9})(?!\\d)").matcher(value);
+        return plain.find() ? plain.group(1) : null;
+    }
+
+    private String findVin(String text) {
+        Matcher matcher = Pattern.compile("(?<![A-Za-z0-9])([A-HJ-NPR-Z0-9]{17})(?![A-Za-z0-9])",
+                Pattern.CASE_INSENSITIVE).matcher(normalizeText(text));
+        while (matcher.find()) {
+            String vin = matcher.group(1).toUpperCase(Locale.US);
+            if (vin.matches(".*[A-Z].*")) return vin;
+        }
+        return null;
     }
 
     private String normalizeText(String text) {
-
-        if (text == null) {
-            return "";
-        }
-
-        text = text
-                .replace("\u200E", "")
-                .replace("\u200F", "")
-                .replace("\u202A", "")
-                .replace("\u202B", "")
-                .replace("\u202C", "")
-                .replace("\u202D", "")
-                .replace("\u202E", "")
-                .replace("\u2066", "")
-                .replace("\u2067", "")
-                .replace("\u2069", "")
-                .replace('\u00A0', ' ')
-                .replace('\u0000', ' ');
-
-        text = text
-                .replace("\r\n", "\n")
-                .replace('\r', '\n');
-
-        text = text.replaceAll(
-                "[ \\t]+",
-                " "
-        );
-
-        text = text.replaceAll(
-                " *\\n *",
-                "\n"
-        );
-
-        text = text.replaceAll(
-                "\\n{3,}",
-                "\n\n"
-        );
-
-        return text.trim();
+        if (text == null) return "";
+        return text.replaceAll("[\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]", "")
+                .replace('\u00A0', ' ').replace('\u0000', ' ')
+                .replace("\r\n", "\n").replace('\r', '\n')
+                .replaceAll("[\\t\\x0B\\f ]+", " ")
+                .replaceAll(" *\\n *", "\n")
+                .replaceAll("\\n{3,}", "\n\n").trim();
     }
 
-    private String cleanText(String text) {
-
-        return normalizeText(text)
-                .replace("\n", " ")
-                .trim();
+    private String cleanLine(String value) {
+        return value == null ? "" : value.replaceAll("[\\t ]+", " ").trim();
     }
 
-    private String findTextField(
-            String text,
-            String label
-    ) {
-
-        if (text == null || text.isEmpty()) {
-            return null;
-        }
-
-        String t =
-                normalizeText(text);
-
-        /*
-         * צורה רגילה:
-         * מען הרצל 1 דירה 2 חולון
-         *
-         * תוצר טויוטה
-         */
-
-        Pattern p =
-                Pattern.compile(
-                        Pattern.quote(label) +
-                        "\\s*[:：\\-–—]?\\s*" +
-                        "([^\\r\\n]+)",
-                        Pattern.CASE_INSENSITIVE
-                );
-
-        Matcher m = p.matcher(t);
-
-        if (m.find()) {
-
-            String value =
-                    cleanFieldValue(m.group(1));
-
-            if (isValidTextValue(value)) {
-                return value;
-            }
-        }
-
-        /*
-         * צורה הפוכה:
-         *
-         * טויוטה תוצר
-         * הרצל 1 דירה 2 חולון מען
-         */
-
-        p = Pattern.compile(
-                "([^\\r\\n]{1,100})" +
-                "\\s+" +
-                Pattern.quote(label) +
-                "\\s*$",
-                Pattern.CASE_INSENSITIVE
-        );
-
-        m = p.matcher(t);
-
-        if (m.find()) {
-
-            String value =
-                    cleanFieldValue(m.group(1));
-
-            if (isValidTextValue(value)) {
-                return value;
-            }
-        }
-
-        /*
-         * תווית בשורה אחת,
-         * ערך בשורה הבאה.
-         */
-
-        p = Pattern.compile(
-                Pattern.quote(label) +
-                "\\s*\\R\\s*" +
-                "([^\\r\\n]+)",
-                Pattern.CASE_INSENSITIVE
-        );
-
-        m = p.matcher(t);
-
-        if (m.find()) {
-
-            String value =
-                    cleanFieldValue(m.group(1));
-
-            if (isValidTextValue(value)) {
-                return value;
-            }
-        }
-
-        return null;
+    private String cleanValue(String value) {
+        if (value == null) return "";
+        return value.replaceAll("^[\\s:：;,|/\\\\-–—]+", "")
+                .replaceAll("[\\s:：;,|/\\\\-–—]+$", "").trim();
     }
 
-    private String cleanFieldValue(
-            String value
-    ) {
-
-        if (value == null) {
-            return "";
-        }
-
-        return value
-                .replace("\n", " ")
-                .replaceAll(
-                        "^[\\s:：\\-–—]+",
-                        ""
-                )
-                .replaceAll(
-                        "[\\s:：\\-–—]+$",
-                        ""
-                )
-                .trim();
-    }
-
-    private boolean isValidTextValue(
-            String value
-    ) {
-
-        if (value == null ||
-                value.trim().isEmpty()) {
-
-            return false;
-        }
-
-        String v = value.trim();
-
-        if (isKnownLabel(v)) {
-            return false;
-        }
-
-        String[] labels = {
-                "בעלים",
-                "מען",
-                "תוצר",
-                "תעודת זהות",
-                "ת.ז",
-                "מספר רכב",
-                "שנת ייצור",
-                "נפח",
-                "מספר שילדה",
-                "שילדה מספר",
-                "VIN"
-        };
-
-        for (String label : labels) {
-
-            if (v.startsWith(label + " ") ||
-                    v.startsWith(label + ":")) {
-
-                return false;
+    private String trimOtherLabels(String value) {
+        if (isEmpty(value)) return "";
+        String result = value;
+        int earliest = result.length();
+        for (String[] group : ALL_LABEL_GROUPS) {
+            for (String label : group) {
+                int at = indexOfIgnoreCase(result, label);
+                if (at > 0 && at < earliest) earliest = at;
             }
         }
-
-        return true;
+        return cleanValue(earliest < result.length() ? result.substring(0, earliest) : result);
     }
 
-    private boolean isKnownLabel(
-            String value
-    ) {
-
-        if (value == null) {
-            return true;
+    private boolean containsAnyLabel(String value) {
+        if (isEmpty(value)) return false;
+        for (String[] group : ALL_LABEL_GROUPS) {
+            for (String label : group) {
+                if (indexOfIgnoreCase(value, label) >= 0) return true;
+            }
         }
-
-        String v = value.trim();
-
-        return v.equals("בעלים") ||
-                v.equals("מען") ||
-                v.equals("תוצר") ||
-                v.equals("תעודת זהות") ||
-                v.equals("ת.ז") ||
-                v.equals("מספר רכב") ||
-                v.equals("שנת ייצור") ||
-                v.equals("נפח") ||
-                v.equals("מספר שילדה") ||
-                v.equals("שילדה מספר") ||
-                v.equalsIgnoreCase("VIN");
+        return false;
     }
 
-    private String findNumberField(
-            String text,
-            String label
-    ) {
-
-        if (text == null ||
-                text.isEmpty()) {
-
-            return null;
-        }
-
-        String t =
-                normalizeText(text);
-
-        /*
-         * צורה רגילה:
-         *
-         * מספר רכב 1234567
-         * שנת ייצור 2015
-         * נפח 1598
-         */
-
-        Pattern p =
-                Pattern.compile(
-                        Pattern.quote(label) +
-                        "\\s*[:：\\-–—]?\\s*" +
-                        "([0-9]{1,10})",
-                        Pattern.CASE_INSENSITIVE
-                );
-
-        Matcher m = p.matcher(t);
-
-        if (m.find()) {
-
-            String value =
-                    m.group(1);
-
-            if (isValidNumberForField(
-                    label,
-                    value)) {
-
-                return value;
-            }
-        }
-
-        /*
-         * צורה הפוכה:
-         *
-         * 1234567 מספר רכב
-         * 2015 שנת ייצור
-         * 1598 נפח
-         */
-
-        p = Pattern.compile(
-                "([0-9]{1,10})" +
-                "\\s+" +
-                Pattern.quote(label),
-                Pattern.CASE_INSENSITIVE
-        );
-
-        m = p.matcher(t);
-
-        if (m.find()) {
-
-            String value =
-                    m.group(1);
-
-            if (isValidNumberForField(
-                    label,
-                    value)) {
-
-                return value;
-            }
-        }
-
-        /*
-         * תווית בשורה אחת,
-         * מספר בשורה הבאה.
-         */
-
-        p = Pattern.compile(
-                Pattern.quote(label) +
-                "\\s*\\R\\s*" +
-                "([0-9]{1,10})",
-                Pattern.CASE_INSENSITIVE
-        );
-
-        m = p.matcher(t);
-
-        if (m.find()) {
-
-            String value =
-                    m.group(1);
-
-            if (isValidNumberForField(
-                    label,
-                    value)) {
-
-                return value;
-            }
-        }
-
-        return null;
+    private int indexOfIgnoreCase(String text, String search) {
+        if (text == null || search == null) return -1;
+        return text.toLowerCase(Locale.ROOT).indexOf(search.toLowerCase(Locale.ROOT));
     }
 
-    private boolean isValidNumberForField(
-            String label,
-            String value
-    ) {
+    private String first(String a, String b) {
+        return !isEmpty(a) ? a : b;
+    }
 
-        if (value == null ||
-                value.isEmpty()) {
-
-            return false;
+    private String join(List<String> values) {
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) result.append(", ");
+            result.append(values.get(i));
         }
+        return result.toString();
+    }
 
+    private boolean isEmpty(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    private void saveDebugText(String sorted, String unsorted) {
         try {
-
-            int n =
-                    Integer.parseInt(value);
-
-            if (label.equals("שנת ייצור")) {
-
-                return n >= 1900 &&
-                        n <= 2100;
+            File directory = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+            if (directory == null) directory = getFilesDir();
+            File file = new File(directory, "BuildHubs_ExtractedText.txt");
+            String content = "===== SORTED TEXT =====\n" + sorted +
+                    "\n\n===== UNSORTED TEXT =====\n" + unsorted;
+            try (FileOutputStream output = new FileOutputStream(file, false)) {
+                output.write(content.getBytes(StandardCharsets.UTF_8));
             }
-
-            if (label.equals("מספר רכב")) {
-
-                return value.length() >= 5 &&
-                        value.length() <= 9;
-            }
-
-            if (label.equals("נפח")) {
-
-                return value.length() >= 2 &&
-                        value.length() <= 6;
-            }
-
-            return true;
-
+            Log.d(TAG, "Debug file: " + file.getAbsolutePath());
         } catch (Exception e) {
-
-            return false;
+            Log.e(TAG, "Unable to save debug text", e);
         }
     }
 
-    private String findId(
-            String text
-    ) {
-
-        if (text == null) {
-            return null;
+    private void editTarget(Uri uri, File output, Fields f) throws Exception {
+        PDDocument document;
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new Exception("לא ניתן לפתוח את PDF היעד.");
+            document = PDDocument.load(input);
         }
-
-        String[] patterns = {
-
-                "תעודת\\s*זהות\\s*" +
-                "[:：\\-]?\\s*" +
-                "(\\d{7,9})\\s*[-–]\\s*(\\d)",
-
-                "תעודת\\s*זהות\\s*" +
-                "[:：\\-]?\\s*" +
-                "(\\d{8,9})",
-
-                "ת\\.?\\s*ז\\.?\\s*" +
-                "[:：\\-]?\\s*" +
-                "(\\d{7,9})\\s*[-–]\\s*(\\d)",
-
-                "\\b(\\d{7,9})\\s*[-–]\\s*(\\d)\\b"
-        };
-
-        for (String regex : patterns) {
-
-            Matcher m =
-                    Pattern.compile(
-                            regex,
-                            Pattern.CASE_INSENSITIVE
-                    ).matcher(text);
-
-            if (m.find()) {
-
-                String first =
-                        m.group(1)
-                                .replaceAll(
-                                        "\\s+",
-                                        ""
-                                );
-
-                if (m.groupCount() >= 2 &&
-                        m.group(2) != null) {
-
-                    String second =
-                            m.group(2)
-                                    .replaceAll(
-                                            "\\s+",
-                                            ""
-                                    );
-
-                    if (!second.isEmpty()) {
-
-                        return first +
-                                "-" +
-                                second;
-                    }
-                }
-
-                return first;
-            }
-        }
-
-        return null;
-    }
-
-    private String findVinField(
-            String text
-    ) {
-
-        if (text == null ||
-                text.isEmpty()) {
-
-            return null;
-        }
-
-        String t =
-                normalizeText(text);
-
-        /*
-         * חיפוש VIN תקני בן 17 תווים.
-         */
-
-        Pattern vin17 =
-                Pattern.compile(
-                        "(?<![A-Za-z0-9])" +
-                        "([A-HJ-NPR-Z0-9]{17})" +
-                        "(?![A-Za-z0-9])",
-                        Pattern.CASE_INSENSITIVE
-                );
-
-        Matcher m =
-                vin17.matcher(t);
-
-        while (m.find()) {
-
-            String vin =
-                    m.group(1).toUpperCase();
-
-            if (vin.matches(
-                    ".*[A-Z].*"
-            )) {
-
-                return vin;
-            }
-        }
-
-        /*
-         * מספר שילדה TMB...
-         */
-
-        Pattern afterLabel =
-                Pattern.compile(
-                        "מספר\\s*שילדה" +
-                        "\\s*[:：\\-–—]?\\s*" +
-                        "([A-HJ-NPR-Z0-9]{10,25})",
-                        Pattern.CASE_INSENSITIVE
-                );
-
-        m = afterLabel.matcher(t);
-
-        if (m.find()) {
-
-            return m.group(1)
-                    .toUpperCase();
-        }
-
-        /*
-         * TMB... שילדה מספר
-         */
-
-        Pattern beforeLabel =
-                Pattern.compile(
-                        "([A-HJ-NPR-Z0-9]{10,25})" +
-                        "\\s+שילדה\\s+מספר",
-                        Pattern.CASE_INSENSITIVE
-                );
-
-        m = beforeLabel.matcher(t);
-
-        if (m.find()) {
-
-            return m.group(1)
-                    .toUpperCase();
-        }
-
-        /*
-         * שילדה מספר TMB...
-         */
-
-        Pattern reversed =
-                Pattern.compile(
-                        "שילדה\\s+מספר" +
-                        "\\s*[:：\\-–—]?\\s*" +
-                        "([A-HJ-NPR-Z0-9]{10,25})",
-                        Pattern.CASE_INSENSITIVE
-                );
-
-        m = reversed.matcher(t);
-
-        if (m.find()) {
-
-            return m.group(1)
-                    .toUpperCase();
-        }
-
-        /*
-         * ניסיון אחרון לפי שורות.
-         */
-
-        String[] lines =
-                t.split("\\n");
-
-        for (int i = 0;
-             i < lines.length;
-             i++) {
-
-            String line =
-                    lines[i].trim();
-
-            if (!line.contains("שילדה")) {
-                continue;
-            }
-
-            Matcher candidate =
-                    Pattern.compile(
-                            "([A-HJ-NPR-Z0-9]{10,25})",
-                            Pattern.CASE_INSENSITIVE
-                    ).matcher(line);
-
-            if (candidate.find()) {
-
-                String vin =
-                        candidate.group(1)
-                                .toUpperCase();
-
-                if (vin.matches(
-                        ".*[A-Z].*"
-                )) {
-
-                    return vin;
-                }
-            }
-
-            if (i + 1 < lines.length) {
-
-                candidate =
-                        Pattern.compile(
-                                "^\\s*" +
-                                "([A-HJ-NPR-Z0-9]{10,25})" +
-                                "\\s*$",
-                                Pattern.CASE_INSENSITIVE
-                        ).matcher(
-                                lines[i + 1]
-                        );
-
-                if (candidate.find()) {
-
-                    return candidate
-                            .group(1)
-                            .toUpperCase();
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private boolean isEmpty(
-            String s
-    ) {
-
-        return s == null ||
-                s.trim().isEmpty();
-    }
-
-    private void editTarget(
-            Uri uri,
-            File out,
-            Fields f
-    ) throws Exception {
-
-        InputStream in =
-                getContentResolver()
-                        .openInputStream(uri);
-
-        if (in == null) {
-
-            throw new Exception(
-                    "לא ניתן לפתוח את PDF היעד."
-            );
-        }
-
-        PDDocument document =
-                PDDocument.load(in);
-
-        in.close();
-
-        if (document.getNumberOfPages() == 0) {
-
-            document.close();
-
-            throw new Exception(
-                    "PDF היעד ריק."
-            );
-        }
-
-        PDPage page =
-                document.getPage(0);
-
-        PDType0Font font =
-                PDType0Font.load(
-                        document,
-                        getAssets().open(
-                                "DejaVuSans.ttf"
-                        ),
-                        true
-                );
-
-        // מספר רישוי
-        coverAndText(
-                document,
-                page,
-                font,
-                f.vehicle,
-                340,
-                602,
-                396,
-                625,
-                9,
-                false
-        );
-
-        // מספר זהות
-        coverAndText(
-                document,
-                page,
-                font,
-                f.id,
-                265,
-                576,
-                335,
-                599,
-                9,
-                false
-        );
-
-        // שם בעל הפוליסה
-        coverAndText(
-                document,
-                page,
-                font,
-                f.owner,
-                465,
-                576,
-                568,
-                599,
-                9,
-                true
-        );
-
-        // כתובת בעל הפוליסה
-        coverAndText(
-                document,
-                page,
-                font,
-                f.address,
-                440,
-                552,
-                568,
-                574,
-                8,
-                true
-        );
-
-        // שנת ייצור
-        coverAndText(
-                document,
-                page,
-                font,
-                f.year,
-                84,
-                518,
-                120,
-                538,
-                9,
-                false
-        );
-
-        // נפח מנוע
-        coverAndText(
-                document,
-                page,
-                font,
-                f.engine,
-                185,
-                518,
-                235,
-                538,
-                9,
-                false
-        );
-
-        // שם היצרן והדגם
-        coverAndText(
-                document,
-                page,
-                font,
-                f.make,
-                245,
-                518,
-                330,
-                538,
-                8,
-                true
-        );
-
-        // מספר שילדה
-        coverAndText(
-                document,
-                page,
-                font,
-                f.vin,
-                465,
-                518,
-                560,
-                538,
-                7,
-                false
-        );
-
-        // השורה הגדולה בתחתית
-        String bottomText =
-                "ת\"ז " +
-                f.id +
-                " " +
-                f.owner +
-                " בלבד";
-
-        coverAndText(
-                document,
-                page,
-                font,
-                bottomText,
-                100,
-                445,
-                450,
-                487,
-                22,
-                true
-        );
-
-        document.save(out);
-        document.close();
-    }
-
-    private void coverAndText(
-            PDDocument document,
-            PDPage page,
-            PDType0Font font,
-            String text,
-            float x0,
-            float y0,
-            float x1,
-            float y1,
-            float size,
-            boolean rtl
-    ) throws Exception {
-
-        if (isEmpty(text)) {
-            return;
-        }
-
-        text =
-                cleanFieldValue(text);
-
-        if (text.isEmpty()) {
-            return;
-        }
-
-        PDPageContentStream cs =
-                new PDPageContentStream(
-                        document,
-                        page,
-                        PDPageContentStream.AppendMode.APPEND,
-                        true,
-                        true
-                );
 
         try {
+            if (document.getNumberOfPages() == 0) throw new Exception("PDF היעד ריק.");
+            PDPage page = document.getPage(0);
+            PDType0Font font;
+            try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
+                font = PDType0Font.load(document, fontInput, true);
+            }
 
-            /*
-             * חשוב:
-             * לא להשתמש כאן ב-Color.WHITE
-             * כי PDFBox מצפה לערכי RGB.
-             */
+            coverAndText(document, page, font, f.vehicle, 340, 602, 396, 625, 9, false);
+            coverAndText(document, page, font, f.id, 265, 576, 335, 599, 9, false);
+            coverAndText(document, page, font, f.owner, 465, 576, 568, 599, 9, true);
+            coverAndText(document, page, font, f.address, 440, 552, 568, 574, 8, true);
+            coverAndText(document, page, font, f.year, 84, 518, 120, 538, 9, false);
+            coverAndText(document, page, font, f.engine, 185, 518, 235, 538, 9, false);
+            coverAndText(document, page, font, f.make, 245, 518, 330, 538, 8, true);
+            coverAndText(document, page, font, f.vin, 465, 518, 560, 538, 7, false);
+            coverAndText(document, page, font, "ת\"ז " + f.id + " " + f.owner + " בלבד",
+                    100, 445, 450, 487, 22, true);
 
-            cs.setNonStrokingColor(
-                    255,
-                    255,
-                    255
-            );
+            document.save(output);
+        } finally {
+            document.close();
+        }
+    }
 
-            cs.addRect(
-                    x0,
-                    y0,
-                    x1 - x0,
-                    y1 - y0
-            );
+    private void coverAndText(PDDocument document, PDPage page, PDType0Font font, String text,
+                              float x0, float y0, float x1, float y1, float size, boolean rtl) throws Exception {
+        if (isEmpty(text)) return;
+        String value = cleanValue(text);
+        if (value.isEmpty()) return;
 
+        try (PDPageContentStream cs = new PDPageContentStream(document, page,
+                PDPageContentStream.AppendMode.APPEND, true, true)) {
+            cs.setNonStrokingColor(255, 255, 255);
+            cs.addRect(x0, y0, x1 - x0, y1 - y0);
             cs.fill();
 
-            String visualText =
-                    text;
-
+            String visual = value;
             if (rtl) {
-
                 try {
-
-                    Bidi bidi =
-                            new Bidi(
-                                    text,
-                                    Bidi.DIRECTION_RIGHT_TO_LEFT
-                            );
-
-                    visualText =
-                            bidi.writeReordered(
-                                    Bidi.DO_MIRRORING
-                            );
-
-                } catch (Exception ignored) {
+                    Bidi bidi = new Bidi(value, Bidi.DIRECTION_RIGHT_TO_LEFT);
+                    visual = bidi.writeReordered(Bidi.DO_MIRRORING);
+                } catch (Exception e) {
+                    Log.w(TAG, "Bidi conversion failed", e);
                 }
             }
 
-            float availableWidth =
-                    x1 - x0;
-
-            float drawSize =
-                    size;
-
-            while (drawSize > 5f) {
-
-                float width =
-                        font.getStringWidth(
-                                visualText
-                        )
-                        / 1000f
-                        * drawSize;
-
-                if (width <= availableWidth) {
-                    break;
-                }
-
+            float available = x1 - x0;
+            float drawSize = size;
+            while (drawSize > 5f && font.getStringWidth(visual) / 1000f * drawSize > available) {
                 drawSize -= 0.5f;
             }
-
-            float textWidth =
-                    font.getStringWidth(
-                            visualText
-                    )
-                    / 1000f
-                    * drawSize;
-
-            float tx;
-
-            if (rtl) {
-
-                tx =
-                        x1 -
-                        Math.min(
-                                textWidth,
-                                availableWidth
-                        );
-
-            } else {
-
-                tx = x0;
-            }
-
-            float ty =
-                    y0 +
-                    ((y1 - y0 - drawSize)
-                            / 2f) +
-                    (drawSize * 0.72f);
+            float textWidth = font.getStringWidth(visual) / 1000f * drawSize;
+            float x = rtl ? x1 - Math.min(textWidth, available) : x0;
+            float y = y0 + ((y1 - y0 - drawSize) / 2f) + drawSize * 0.72f;
 
             cs.beginText();
-
-            /*
-             * חשוב:
-             * גם כאן RGB ולא Color.BLACK.
-             */
-
-            cs.setNonStrokingColor(
-                    0,
-                    0,
-                    0
-            );
-
-            cs.setFont(
-                    font,
-                    drawSize
-            );
-
-            cs.newLineAtOffset(
-                    tx,
-                    ty
-            );
-
-            cs.showText(
-                    visualText
-            );
-
+            cs.setNonStrokingColor(0, 0, 0);
+            cs.setFont(font, drawSize);
+            cs.newLineAtOffset(x, y);
+            cs.showText(visual);
             cs.endText();
-
-        } finally {
-
-            cs.close();
         }
     }
 
-    private void share(
-            File file
-    ) {
-
+    private void share(File file) {
         try {
-
-            Uri uri =
-                    FileProvider.getUriForFile(
-                            this,
-                            getPackageName() +
-                            ".provider",
-                            file
-                    );
-
-            Intent intent =
-                    new Intent(
-                            Intent.ACTION_SEND
-                    );
-
-            intent.setType(
-                    "application/pdf"
-            );
-
-            intent.putExtra(
-                    Intent.EXTRA_STREAM,
-                    uri
-            );
-
-            intent.addFlags(
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-            );
-
-            startActivity(
-                    Intent.createChooser(
-                            intent,
-                            "שליחת PDF"
-                    )
-            );
-
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".provider", file);
+            Intent intent = new Intent(Intent.ACTION_SEND);
+            intent.setType("application/pdf");
+            intent.putExtra(Intent.EXTRA_STREAM, uri);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(intent, "שליחת PDF"));
         } catch (Exception e) {
-
-            status.setText(
-                    "ה-PDF נוצר בהצלחה:\n" +
-                    file.getAbsolutePath() +
-                    "\n\nלא ניתן לפתוח את חלון השיתוף: " +
-                    e.getMessage()
-            );
+            status.setText("ה-PDF נוצר בהצלחה:\n" + file.getAbsolutePath() +
+                    "\n\nלא ניתן לפתוח את חלון השיתוף: " + e.getMessage());
         }
     }
+
+    private enum FieldKind { OWNER, ADDRESS, MAKE }
+    private enum NumberKind { VEHICLE, YEAR, ENGINE }
 
     static class Fields {
-
         String owner;
         String id;
         String vehicle;
@@ -1404,5 +556,12 @@ public class MainActivity extends AppCompatActivity {
         String engine;
         String make;
         String vin;
+
+        String toDebugString() {
+            return "===== EXTRACTED FIELDS =====" +
+                    "\nowner=" + owner + "\nid=" + id + "\nvehicle=" + vehicle +
+                    "\naddress=" + address + "\nyear=" + year + "\nengine=" + engine +
+                    "\nmake=" + make + "\nvin=" + vin;
+        }
     }
 }
