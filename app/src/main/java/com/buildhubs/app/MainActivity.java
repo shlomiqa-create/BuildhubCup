@@ -2,7 +2,6 @@ package com.buildhubs.app;
 
 import android.content.Intent;
 import android.graphics.Color;
-import android.icu.text.Bidi;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -20,9 +19,6 @@ import androidx.core.content.FileProvider;
 
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
 import com.tom_roush.pdfbox.pdmodel.PDDocument;
-import com.tom_roush.pdfbox.pdmodel.PDPage;
-import com.tom_roush.pdfbox.pdmodel.PDPageContentStream;
-import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
 
 import java.io.File;
@@ -551,7 +547,7 @@ public class MainActivity extends AppCompatActivity {
     private String normalizeText(String text) {
         if (text == null) return "";
         return text.replaceAll("[\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]", "")
-                .replace('\u00A0', ' ').replace('\u0000', ' ')
+                .replace(' ', ' ').replace('\u0000', ' ')
                 .replace("\r\n", "\n").replace('\r', '\n')
                 .replaceAll("[\\t\\x0B\\f ]+", " ")
                 .replaceAll(" *\\n *", "\n")
@@ -629,6 +625,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // Writing onto the target form is done by PdfFiller, using cell positions measured from the form's borders.
     private void editTarget(Uri uri, File output, Fields f) throws Exception {
         PDDocument document;
         try (InputStream input = getContentResolver().openInputStream(uri)) {
@@ -638,70 +635,13 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             if (document.getNumberOfPages() == 0) throw new Exception("PDF היעד ריק.");
-            PDPage page = document.getPage(0);
-            PDType0Font font;
             try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
-                font = PDType0Font.load(document, fontInput, true);
+                PdfFiller.fill(document, f.owner, f.id, f.vehicle, f.address,
+                        f.year, f.engine, f.make, f.vin, fontInput);
             }
-
-            // Exact value cells measured from the attached target form 2.pdf (A4, 595 x 842 pt).
-            coverAndText(document, page, font, f.vehicle, 340, 602, 397, 625, 9, false);
-            coverAndText(document, page, font, f.id, 265, 576, 335, 599, 9, false);
-            coverAndText(document, page, font, f.owner, 500, 576, 568, 599, 9, true);
-            coverAndText(document, page, font, f.address, 440, 552, 568, 574, 8, true);
-            coverAndText(document, page, font, f.year, 84, 518, 120, 538, 9, false);
-            coverAndText(document, page, font, f.engine, 200, 518, 235, 538, 9, false);
-            coverAndText(document, page, font, f.make, 245, 518, 330, 538, 8, true);
-            coverAndText(document, page, font, f.vin, 465, 518, 568, 538, 7, false);
-
-            // Bottom large line: replace only the old name and ID.
-            // Keep the original labels ת"ז and בלבד intact and avoid changing their order.
-            coverAndText(document, page, font, f.owner, 165, 445, 263, 487, 22, true);
-            coverAndText(document, page, font, f.id, 263, 445, 399, 487, 22, false);
-
             document.save(output);
         } finally {
             document.close();
-        }
-    }
-
-    private void coverAndText(PDDocument document, PDPage page, PDType0Font font, String text,
-                              float x0, float y0, float x1, float y1, float size, boolean rtl) throws Exception {
-        if (isEmpty(text)) return;
-        String value = cleanValue(text);
-        if (value.isEmpty()) return;
-
-        try (PDPageContentStream cs = new PDPageContentStream(document, page,
-                PDPageContentStream.AppendMode.APPEND, true, true)) {
-            cs.setNonStrokingColor(255, 255, 255);
-            cs.addRect(x0, y0, x1 - x0, y1 - y0);
-            cs.fill();
-
-            String visual = value;
-            if (rtl) {
-                try {
-                    Bidi bidi = new Bidi(value, Bidi.DIRECTION_RIGHT_TO_LEFT);
-                    visual = bidi.writeReordered(Bidi.DO_MIRRORING);
-                } catch (Exception e) {
-                    Log.w(TAG, "Bidi conversion failed", e);
-                }
-            }
-
-            float available = x1 - x0;
-            float drawSize = size;
-            while (drawSize > 5f && font.getStringWidth(visual) / 1000f * drawSize > available) {
-                drawSize -= 0.5f;
-            }
-            float textWidth = font.getStringWidth(visual) / 1000f * drawSize;
-            float x = rtl ? x1 - Math.min(textWidth, available) : x0;
-            float y = y0 + ((y1 - y0 - drawSize) / 2f) + drawSize * 0.72f;
-
-            cs.beginText();
-            cs.setNonStrokingColor(0, 0, 0);
-            cs.setFont(font, drawSize);
-            cs.newLineAtOffset(x, y);
-            cs.showText(visual);
-            cs.endText();
         }
     }
 
