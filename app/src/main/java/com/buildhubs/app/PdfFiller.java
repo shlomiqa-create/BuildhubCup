@@ -105,7 +105,7 @@ public final class PdfFiller {
      */
     static String toVisual(String s) {
         if (!hasHebrew(s)) return s;
-        String[] w = s.split("\s+");
+        String[] w = s.split(" +");
         StringBuilder sb = new StringBuilder();
         for (int i = w.length - 1; i >= 0; i--) {
             String t = hasHebrew(w[i]) ? new StringBuilder(w[i]).reverse().toString() : w[i];
