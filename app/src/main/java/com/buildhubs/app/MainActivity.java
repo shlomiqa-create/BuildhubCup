@@ -218,7 +218,8 @@ public class MainActivity extends AppCompatActivity {
 
     private Fields extractFields(String text) {
         Fields f = new Fields();
-        f.owner = findTextField(text, OWNER_LABELS, FieldKind.OWNER);
+        f.owner = findOwnerContextual(text);
+        if (isEmpty(f.owner)) f.owner = findTextField(text, OWNER_LABELS, FieldKind.OWNER);
         f.id = findId(text);
         f.vehicle = findNumberField(text, VEHICLE_LABELS, NumberKind.VEHICLE);
         f.address = findTextField(text, ADDRESS_LABELS, FieldKind.ADDRESS);
@@ -228,7 +229,6 @@ public class MainActivity extends AppCompatActivity {
         f.vin = findVin(text);
 
         // Final contextual fallback for PDFs that place several fields on one visual line.
-        if (isEmpty(f.owner)) f.owner = findOwnerContextual(text);
         if (isEmpty(f.id)) f.id = findIdContextual(text);
         if (isEmpty(f.vehicle)) f.vehicle = findVehicleContextual(text);
         if (isEmpty(f.make)) f.make = findMakeContextual(text);
@@ -386,40 +386,41 @@ public class MainActivity extends AppCompatActivity {
     private String findOwnerContextual(String text) {
         String t = searchableText(text);
 
-        // PDFBox may return punctuation, digits or reversed RTL around the label.
-        // Capture only 2-4 consecutive Hebrew words next to the specific owner label.
         String name = "([א-ת][א-ת'׳-]*(?:\\s+[א-ת][א-ת'׳-]*){1,3})";
         String normalLabel = "שם\\s*הבעלים";
         String reversedLabel = "םילעבה\\s*םש";
+        String nextField = "(?=\\s*(?:פ\\s*[\\\"']?\\s*ח|ח\\s*[\\\"']?\\s*פ|מס\\s*['.]?\\s*זהות|זהות|תעודת\\s*זהות|ת\\s*[.]?\\s*ז|מס\\s*['.]?\\s*רישוי|רישוי\\s*['.]?\\s*מס|$))";
 
-        String[] afterPatterns = {
-                normalLabel + "[^א-ת]{0,40}" + name,
-                reversedLabel + "[^א-ת]{0,40}" + name
-        };
-        for (String regex : afterPatterns) {
-            Matcher m = Pattern.compile(regex).matcher(t);
-            if (m.find()) {
-                String value = cleanOwnerName(m.group(1));
-                if (!isEmpty(value)) return value;
-            }
+        // Normal logical order: שם הבעלים שליו חכם
+        Matcher after = Pattern.compile(
+                normalLabel + "[^א-ת]{0,20}" + name + nextField
+        ).matcher(t);
+        if (after.find()) {
+            String value = cleanOwnerName(after.group(1));
+            if (!isEmpty(value)) return value;
         }
 
-        String[] beforePatterns = {
-                name + "[^א-ת]{0,40}" + normalLabel,
-                name + "[^א-ת]{0,40}" + reversedLabel
-        };
-        for (String regex : beforePatterns) {
-            Matcher m = Pattern.compile(regex).matcher(t);
-            String result = null;
-            while (m.find()) {
-                String value = cleanOwnerName(m.group(1));
-                if (!isEmpty(value)) result = value;
-            }
-            if (!isEmpty(result)) return result;
+        // Reversed label as sometimes returned by PDF text extraction.
+        after = Pattern.compile(
+                reversedLabel + "[^א-ת]{0,20}" + name + nextField
+        ).matcher(t);
+        if (after.find()) {
+            String value = cleanOwnerName(after.group(1));
+            if (!isEmpty(value)) return value;
         }
 
-        // Last safe fallback: in the real report the owner also appears immediately
-        // before the internal policy/account number and the specific owner label.
+        // Value before label: שליו חכם שם הבעלים
+        Matcher before = Pattern.compile(
+                name + "[^א-ת]{0,20}(?:" + normalLabel + "|" + reversedLabel + ")"
+        ).matcher(t);
+        String result = null;
+        while (before.find()) {
+            String value = cleanOwnerName(before.group(1));
+            if (!isEmpty(value)) result = value;
+        }
+        if (!isEmpty(result)) return result;
+
+        // Layout fallback in these reports: name + 581-26-702 + שם הבעלים.
         Matcher reportLayout = Pattern.compile(
                 name + "\\s+\\d{2,4}[-–]\\d{2,4}[-–]\\d{2,4}\\s*" + normalLabel
         ).matcher(t);
@@ -643,16 +644,20 @@ public class MainActivity extends AppCompatActivity {
                 font = PDType0Font.load(document, fontInput, true);
             }
 
-            coverAndText(document, page, font, f.vehicle, 340, 602, 396, 625, 9, false);
+            // Exact value cells measured from the attached target form 2.pdf (A4, 595 x 842 pt).
+            coverAndText(document, page, font, f.vehicle, 340, 602, 397, 625, 9, false);
             coverAndText(document, page, font, f.id, 265, 576, 335, 599, 9, false);
-            coverAndText(document, page, font, f.owner, 465, 576, 568, 599, 9, true);
+            coverAndText(document, page, font, f.owner, 500, 576, 568, 599, 9, true);
             coverAndText(document, page, font, f.address, 440, 552, 568, 574, 8, true);
             coverAndText(document, page, font, f.year, 84, 518, 120, 538, 9, false);
-            coverAndText(document, page, font, f.engine, 185, 518, 235, 538, 9, false);
+            coverAndText(document, page, font, f.engine, 200, 518, 235, 538, 9, false);
             coverAndText(document, page, font, f.make, 245, 518, 330, 538, 8, true);
-            coverAndText(document, page, font, f.vin, 465, 518, 560, 538, 7, false);
-            coverAndText(document, page, font, "ת\"ז " + f.id + " " + f.owner + " בלבד",
-                    100, 445, 450, 487, 22, true);
+            coverAndText(document, page, font, f.vin, 465, 518, 568, 538, 7, false);
+
+            // Bottom large line: replace only the old name and ID.
+            // Keep the original labels ת"ז and בלבד intact and avoid changing their order.
+            coverAndText(document, page, font, f.owner, 165, 445, 263, 487, 22, true);
+            coverAndText(document, page, font, f.id, 263, 445, 399, 487, 22, false);
 
             document.save(output);
         } finally {
