@@ -260,6 +260,22 @@ public class MainActivity extends AppCompatActivity {
             try (PDDocument document = PDDocument.load(input)) {
                 if (document.getNumberOfPages() == 0) throw new Exception("PDF המקור ריק.");
 
+                // Ministry of Transport license printout: labels are graphics, so parse by position.
+                VehicleParser.Fields lic = LicenseParser.parse(document);
+                if (lic != null && lic.count() >= 7) { // engine volume may be empty (e.g. trailers)
+                    Fields licFields = new Fields();
+                    licFields.owner = lic.owner;
+                    licFields.id = lic.id;
+                    licFields.vehicle = lic.vehicle;
+                    licFields.address = lic.address;
+                    licFields.year = lic.year;
+                    licFields.engine = lic.engine;
+                    licFields.make = lic.make;
+                    licFields.vin = lic.vin;
+                    Log.d(TAG, "License format detected\n" + licFields.toDebugString());
+                    return licFields;
+                }
+
                 PDFTextStripper sortedStripper = new PDFTextStripper();
                 sortedStripper.setSortByPosition(true);
                 sortedText = normalizeText(sortedStripper.getText(document));
