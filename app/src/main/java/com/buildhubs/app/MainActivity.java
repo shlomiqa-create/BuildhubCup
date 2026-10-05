@@ -1,14 +1,19 @@
 package com.buildhubs.app;
 
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.pdf.PdfRenderer;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.ParcelFileDescriptor;
 import android.util.Log;
 import android.view.Gravity;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.Space;
 import android.widget.TextView;
 
@@ -55,6 +60,9 @@ public class MainActivity extends AppCompatActivity {
     private TextView status;
     private ActivityResultLauncher<String[]> picker;
     private boolean pickingSource;
+    private File lastOutput;
+    private Button viewButton;
+    private ImageView preview;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -123,9 +131,25 @@ public class MainActivity extends AppCompatActivity {
         createButton.setOnClickListener(v -> create());
         root.addView(createButton);
 
+        viewButton = button("4. צפייה ב-PDF שנוצר");
+        viewButton.setEnabled(false);
+        viewButton.setOnClickListener(v -> viewFile());
+        root.addView(viewButton);
+
         status = label("הערכים שיועתקו: בעלים, ת.ז., מספר רכב, מען, שנת ייצור, נפח, תוצר ומספר שילדה.");
         root.addView(status);
-        setContentView(root);
+
+        // Preview of the generated PDF (first page). Tap to open it full-screen in a PDF viewer.
+        preview = new ImageView(this);
+        preview.setAdjustViewBounds(true);
+        preview.setVisibility(android.view.View.GONE);
+        preview.setOnClickListener(v -> viewFile());
+        root.addView(preview, new LinearLayout.LayoutParams(-1, -2));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(root);
+        setContentView(scroll);
     }
 
     private TextView label(String text) {
@@ -161,6 +185,9 @@ public class MainActivity extends AppCompatActivity {
             if (directory == null) directory = getFilesDir();
             File output = new File(directory, "BuildHubs_" + System.currentTimeMillis() + ".pdf");
             editTarget(targetUri, output, fields);
+            lastOutput = output;
+            viewButton.setEnabled(true);
+            showPreview(output);
             status.setText("נוצר PDF חדש בהצלחה:\n" + output.getAbsolutePath());
             share(output);
         } catch (Exception e) {
@@ -653,6 +680,44 @@ public class MainActivity extends AppCompatActivity {
             document.save(output);
         } finally {
             document.close();
+        }
+    }
+
+    private void showPreview(File file) {
+        try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+             PdfRenderer renderer = new PdfRenderer(fd)) {
+            if (renderer.getPageCount() == 0) return;
+            PdfRenderer.Page page = renderer.openPage(0);
+            try {
+                int width = getResources().getDisplayMetrics().widthPixels;
+                int height = Math.round(width * (float) page.getHeight() / page.getWidth());
+                Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                bitmap.eraseColor(Color.WHITE);
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                preview.setImageBitmap(bitmap);
+                preview.setVisibility(android.view.View.VISIBLE);
+            } finally {
+                page.close();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Preview failed", e);
+            preview.setVisibility(android.view.View.GONE);
+        }
+    }
+
+    private void viewFile() {
+        if (lastOutput == null || !lastOutput.exists()) {
+            status.setText("עדיין לא נוצר PDF לצפייה.");
+            return;
+        }
+        try {
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".provider", lastOutput);
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, "application/pdf");
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(intent);
+        } catch (Exception e) {
+            status.setText("לא נמצאה אפליקציה לצפייה ב-PDF. התקן קורא PDF או שתף את הקובץ.\n" + e.getMessage());
         }
     }
 
