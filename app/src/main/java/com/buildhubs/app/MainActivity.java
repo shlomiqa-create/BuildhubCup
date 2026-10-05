@@ -200,6 +200,10 @@ public class MainActivity extends AppCompatActivity {
         shareImageButton.setOnClickListener(v -> shareInsuranceAsImage());
         root.addView(shareImageButton);
 
+        Button historyButton = button("היסטוריה");
+        historyButton.setOnClickListener(v -> showHistory());
+        root.addView(historyButton);
+
         status = label("הערכים שיועתקו: בעלים, ת.ז., מספר רכב, מען, שנת ייצור, נפח, תוצר ומספר שילדה.");
         root.addView(status);
 
@@ -261,8 +265,8 @@ public class MainActivity extends AppCompatActivity {
             showPreview(output);
             lastInsurance = output;
             lastPlate = fields.vehicle;
-            status.setText("נוצר PDF חדש בהצלחה:\n" + output.getAbsolutePath());
-            share(output);
+            status.setText("נוצר PDF חדש בהצלחה:\n" + output.getAbsolutePath()
+                    + "\nלשיתוף: כפתורי \"שיתוף\" או \"שיתוף כתמונה\".");
         } catch (Exception e) {
             Log.e(TAG, "Operation failed", e);
             status.setText("שגיאה: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
@@ -900,8 +904,8 @@ public class MainActivity extends AppCompatActivity {
             showPreview(output);
             lastForm = output;
             lastPlate = f.vehicle;
-            status.setText("נוצר טופס בהצלחה:\n" + output.getAbsolutePath());
-            share(output);
+            status.setText("נוצר טופס בהצלחה:\n" + output.getAbsolutePath()
+                    + "\nלשיתוף: כפתור \"שיתוף\".");
         } catch (Exception e) {
             Log.e(TAG, "Form failed", e);
             status.setText("שגיאה: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
@@ -931,12 +935,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void viewFile() {
-        if (lastOutput == null || !lastOutput.exists()) {
+        openFile(lastOutput);
+    }
+
+    private void openFile(File file) {
+        if (file == null || !file.exists()) {
             status.setText("עדיין לא נוצר PDF לצפייה.");
             return;
         }
         try {
-            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".provider", lastOutput);
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".provider", file);
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setDataAndType(uri, "application/pdf");
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -955,9 +963,117 @@ public class MainActivity extends AppCompatActivity {
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(Intent.createChooser(intent, "שליחת PDF"));
         } catch (Exception e) {
-            status.setText("ה-PDF נוצר בהצלחה:\n" + file.getAbsolutePath() +
-                    "\n\nלא ניתן לפתוח את חלון השיתוף: " + e.getMessage());
+            status.setText("לא ניתן לפתוח את חלון השיתוף: " + e.getMessage());
         }
+    }
+
+    // ---------- history of generated files ----------
+
+    private File outputDir() {
+        File d = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+        return d != null ? d : getFilesDir();
+    }
+
+    /** Generated PDFs (insurance: BuildHubs_<ts>.pdf, form: BuildHubs_Form_<ts>.pdf), newest first. */
+    private List<File> listGenerated() {
+        File[] all = outputDir().listFiles((dir, name) -> name.startsWith("BuildHubs_") && name.endsWith(".pdf"));
+        List<File> out = new ArrayList<>();
+        if (all != null) java.util.Collections.addAll(out, all);
+        java.util.Collections.sort(out, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+        return out;
+    }
+
+    private String describe(File f) {
+        String kind = f.getName().startsWith("BuildHubs_Form_") ? "טופס" : "ביטוח";
+        String when = new java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.US)
+                .format(new java.util.Date(f.lastModified()));
+        return kind + " · " + when + " · " + Math.max(1L, f.length() / 1024L) + " KB";
+    }
+
+    private void showHistory() {
+        final List<File> files = listGenerated();
+        if (files.isEmpty()) {
+            status.setText("אין עדיין קבצים שנוצרו.");
+            return;
+        }
+        String[] labels = new String[files.size()];
+        for (int i = 0; i < files.size(); i++) labels[i] = describe(files.get(i));
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("היסטוריה (" + files.size() + ")")
+                .setItems(labels, (dialog, which) -> fileActions(files.get(which)))
+                .setNeutralButton("ניקוי", (dialog, which) -> showCleanup())
+                .setNegativeButton("סגור", null)
+                .show();
+    }
+
+    private void fileActions(final File file) {
+        String[] actions = {"פתיחה", "שיתוף", "מחיקה"};
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(describe(file))
+                .setItems(actions, (dialog, which) -> {
+                    if (which == 0) openFile(file);
+                    else if (which == 1) share(file);
+                    else confirmDelete(file);
+                })
+                .setNegativeButton("חזרה", (dialog, which) -> showHistory())
+                .show();
+    }
+
+    private void confirmDelete(final File file) {
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("למחוק את הקובץ?")
+                .setMessage(describe(file))
+                .setPositiveButton("מחיקה", (dialog, which) -> {
+                    boolean ok = deleteGenerated(file);
+                    status.setText(ok ? "הקובץ נמחק." : "לא ניתן למחוק את הקובץ.");
+                    showHistory();
+                })
+                .setNegativeButton("ביטול", null)
+                .show();
+    }
+
+    private void showCleanup() {
+        String[] choices = {"מחיקת קבצים ישנים (מעל 30 יום)", "מחיקת כל הקבצים"};
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("ניקוי היסטוריה")
+                .setItems(choices, (dialog, which) -> {
+                    final boolean all = which == 1;
+                    new androidx.appcompat.app.AlertDialog.Builder(this)
+                            .setTitle(all ? "למחוק את כל הקבצים?" : "למחוק קבצים מעל 30 יום?")
+                            .setMessage("לא ניתן לשחזר.")
+                            .setPositiveButton("מחיקה", (d2, w2) -> cleanup(all))
+                            .setNegativeButton("ביטול", null)
+                            .show();
+                })
+                .setNegativeButton("חזרה", (dialog, which) -> showHistory())
+                .show();
+    }
+
+    private void cleanup(boolean all) {
+        long cutoff = System.currentTimeMillis() - 30L * 24L * 60L * 60L * 1000L;
+        int deleted = 0;
+        for (File f : listGenerated()) {
+            if ((all || f.lastModified() < cutoff) && deleteGenerated(f)) deleted++;
+        }
+        // temporary copies made for sharing are recreated on demand
+        File[] temp = new File(outputDir(), "share").listFiles();
+        if (temp != null) for (File t : temp) t.delete();
+        status.setText("נמחקו " + deleted + " קבצים.");
+    }
+
+    /** Deletes a generated file and forgets it if it was the latest one. */
+    private boolean deleteGenerated(File f) {
+        boolean ok = f.delete();
+        if (ok) {
+            if (f.equals(lastInsurance)) lastInsurance = null;
+            if (f.equals(lastForm)) lastForm = null;
+            if (f.equals(lastOutput)) {
+                lastOutput = null;
+                viewButton.setEnabled(false);
+                preview.setVisibility(android.view.View.GONE);
+            }
+        }
+        return ok;
     }
 
     private enum FieldKind { OWNER, ADDRESS, MAKE }
