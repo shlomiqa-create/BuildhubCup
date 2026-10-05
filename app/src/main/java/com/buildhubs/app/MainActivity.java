@@ -61,6 +61,9 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<String[]> picker;
     private boolean pickingSource;
     private File lastOutput;
+    private File lastInsurance;
+    private File lastForm;
+    private String lastPlate;
     private Button viewButton;
     private ImageView preview;
 
@@ -201,7 +204,16 @@ public class MainActivity extends AppCompatActivity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(root);
-        setContentView(scroll);
+
+        // Fixed bar at the very bottom: "שיתוף" shares the license, the insurance and the form together.
+        Button shareAllButton = button("שיתוף");
+        shareAllButton.setOnClickListener(v -> shareAll());
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setBackgroundColor(Color.WHITE);
+        outer.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        outer.addView(shareAllButton, new LinearLayout.LayoutParams(-1, -2));
+        setContentView(outer);
     }
 
     private TextView label(String text) {
@@ -247,6 +259,8 @@ public class MainActivity extends AppCompatActivity {
             lastOutput = output;
             viewButton.setEnabled(true);
             showPreview(output);
+            lastInsurance = output;
+            lastPlate = fields.vehicle;
             status.setText("נוצר PDF חדש בהצלחה:\n" + output.getAbsolutePath());
             share(output);
         } catch (Exception e) {
@@ -758,6 +772,62 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** "שיתוף": sends the license (source), the insurance and the form together in one share. */
+    private void shareAll() {
+        List<String> missing = new ArrayList<>();
+        if (sourceUri == null) missing.add("רישיון רכב (בחירת PDF מקור)");
+        if (lastInsurance == null || !lastInsurance.exists()) missing.add("ביטוח (כפתור 3)");
+        if (lastForm == null || !lastForm.exists()) missing.add("טופס");
+        if (!missing.isEmpty()) {
+            status.setText("חסרים לשיתוף: " + join(missing));
+            return;
+        }
+        try {
+            File base = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+            if (base == null) base = getFilesDir();
+            File dir = new File(base, "share");
+            if (!dir.exists() && !dir.mkdirs()) throw new Exception("לא ניתן ליצור תיקייה זמנית");
+            String plate = isEmpty(lastPlate) ? "" : "_" + lastPlate.trim();
+
+            File license = new File(dir, "רישיון_רכב" + plate + ".pdf");
+            try (InputStream in = getContentResolver().openInputStream(sourceUri);
+                 FileOutputStream out = new FileOutputStream(license)) {
+                if (in == null) throw new Exception("לא ניתן לקרוא את קובץ הרישיון");
+                byte[] buf = new byte[16384];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            File insurance = copyTo(lastInsurance, new File(dir, "ביטוח" + plate + ".pdf"));
+            File form = copyTo(lastForm, new File(dir, "טופס" + plate + ".pdf"));
+
+            ArrayList<Uri> uris = new ArrayList<>();
+            for (File f : new File[]{license, insurance, form}) {
+                uris.add(FileProvider.getUriForFile(this, getPackageName() + ".provider", f));
+            }
+            Intent send = new Intent(Intent.ACTION_SEND_MULTIPLE);
+            send.setType("application/pdf");
+            send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+            android.content.ClipData clip = android.content.ClipData.newRawUri("pdf", uris.get(0));
+            for (int i = 1; i < uris.size(); i++) clip.addItem(new android.content.ClipData.Item(uris.get(i)));
+            send.setClipData(clip);
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(send, "שיתוף רישיון, ביטוח וטופס"));
+        } catch (Exception e) {
+            Log.e(TAG, "Share all failed", e);
+            status.setText("שגיאה בשיתוף: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+    }
+
+    private File copyTo(File from, File to) throws Exception {
+        try (InputStream in = new java.io.FileInputStream(from);
+             FileOutputStream out = new FileOutputStream(to)) {
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        }
+        return to;
+    }
+
     /** "טופס": fills the power-of-attorney form (bundled in assets) from the selected source PDF. */
     private void createPowerOfAttorney() {
         if (sourceUri == null) {
@@ -782,6 +852,8 @@ public class MainActivity extends AppCompatActivity {
             lastOutput = output;
             viewButton.setEnabled(true);
             showPreview(output);
+            lastForm = output;
+            lastPlate = f.vehicle;
             status.setText("נוצר טופס בהצלחה:\n" + output.getAbsolutePath());
             share(output);
         } catch (Exception e) {
