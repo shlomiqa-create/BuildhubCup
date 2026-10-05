@@ -70,6 +70,53 @@ public class MainActivity extends AppCompatActivity {
         PDFBoxResourceLoader.init(getApplicationContext());
         registerPicker();
         buildUi();
+        loadSavedTarget();
+        // A PDF opened with / shared to the app (WhatsApp, Files, Gmail...) becomes the source automatically.
+        if (savedInstanceState == null) handleIncoming(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncoming(intent);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void handleIncoming(Intent intent) {
+        if (intent == null) return;
+        Uri uri = null;
+        if (Intent.ACTION_VIEW.equals(intent.getAction())) {
+            uri = intent.getData();
+        } else if (Intent.ACTION_SEND.equals(intent.getAction())) {
+            uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+        }
+        if (uri == null) return;
+
+        sourceUri = uri;
+        sourceLabel.setText("מקור: " + displayName(uri));
+        if (targetUri != null) {
+            create();
+        } else {
+            status.setText("התקבל PDF מקור. בחר PDF יעד / טופס (שלב 2) ואז צור PDF חדש. הטופס יישמר לפעם הבאה.");
+        }
+    }
+
+    private void loadSavedTarget() {
+        try {
+            String saved = getSharedPreferences("buildhubs", MODE_PRIVATE).getString("target_uri", null);
+            if (saved == null) return;
+            Uri uri = Uri.parse(saved);
+            for (android.content.UriPermission p : getContentResolver().getPersistedUriPermissions()) {
+                if (p.getUri().equals(uri) && p.isReadPermission()) {
+                    targetUri = uri;
+                    targetLabel.setText("יעד (נשמר): " + displayName(uri));
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not restore saved target", e);
+        }
     }
 
     private void registerPicker() {
@@ -84,6 +131,7 @@ public class MainActivity extends AppCompatActivity {
                 sourceLabel.setText("מקור: " + displayName(uri));
             } else {
                 targetUri = uri;
+                getSharedPreferences("buildhubs", MODE_PRIVATE).edit().putString("target_uri", uri.toString()).apply();
                 targetLabel.setText("יעד: " + displayName(uri));
             }
         });
@@ -168,6 +216,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String displayName(Uri uri) {
+        try (android.database.Cursor c = getContentResolver().query(uri,
+                new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                String n = c.getString(0);
+                if (n != null && !n.isEmpty()) return n;
+            }
+        } catch (Exception ignored) { }
         String name = uri.getLastPathSegment();
         return name == null ? uri.toString() : name;
     }
