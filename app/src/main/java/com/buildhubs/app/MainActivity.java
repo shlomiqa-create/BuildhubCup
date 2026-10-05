@@ -191,6 +191,11 @@ public class MainActivity extends AppCompatActivity {
         viewButton.setOnClickListener(v -> viewFile());
         root.addView(viewButton);
 
+        // "שיתוף" shares the license, the insurance and the form together.
+        Button shareAllButton = button("שיתוף");
+        shareAllButton.setOnClickListener(v -> shareAll());
+        root.addView(shareAllButton);
+
         status = label("הערכים שיועתקו: בעלים, ת.ז., מספר רכב, מען, שנת ייצור, נפח, תוצר ומספר שילדה.");
         root.addView(status);
 
@@ -204,16 +209,7 @@ public class MainActivity extends AppCompatActivity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(root);
-
-        // Fixed bar at the very bottom: "שיתוף" shares the license, the insurance and the form together.
-        Button shareAllButton = button("שיתוף");
-        shareAllButton.setOnClickListener(v -> shareAll());
-        LinearLayout outer = new LinearLayout(this);
-        outer.setOrientation(LinearLayout.VERTICAL);
-        outer.setBackgroundColor(Color.WHITE);
-        outer.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
-        outer.addView(shareAllButton, new LinearLayout.LayoutParams(-1, -2));
-        setContentView(outer);
+        setContentView(scroll);
     }
 
     private TextView label(String text) {
