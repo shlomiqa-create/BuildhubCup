@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
  * In that document the labels are graphics, only the values are text, so fields are found by
  * their position relative to the vehicle-number anchor (same layout as the BuildHubs app).
  *
- * Output rules: owner = first name then family name (the license prints family first),
+ * Output rules: owner exactly as printed on the license (family name first),
  * address kept in full (postal code included), chassis without its first 3 characters.
  */
 public final class LicenseParser {
@@ -50,16 +50,10 @@ public final class LicenseParser {
         VehicleParser.Fields f = new VehicleParser.Fields();
         f.vehicle = anchor.str;
 
-        // owner: the license prints "family first"; output "first family"
+        // owner: copied exactly in the order printed on the license (family name first)
         List<String> ow = new ArrayList<>();
         for (Item i : row(items, 83, 5, 400, 600, dy)) if (HEB.matcher(i.str).find()) ow.add(i.str);
-        if (ow.size() > 1) {
-            List<String> r = new ArrayList<>(ow.subList(1, ow.size()));
-            r.add(ow.get(0));
-            f.owner = join(r);
-        } else {
-            f.owner = join(ow);
-        }
+        f.owner = join(ow);
 
         // address: the whole line, including the postal code
         List<String> ad = new ArrayList<>();
