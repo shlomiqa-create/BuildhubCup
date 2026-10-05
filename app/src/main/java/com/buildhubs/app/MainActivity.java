@@ -179,6 +179,10 @@ public class MainActivity extends AppCompatActivity {
         createButton.setOnClickListener(v -> create());
         root.addView(createButton);
 
+        Button formButton = button("טופס");
+        formButton.setOnClickListener(v -> createPowerOfAttorney());
+        root.addView(formButton);
+
         viewButton = button("4. צפייה ב-PDF שנוצר");
         viewButton.setEnabled(false);
         viewButton.setOnClickListener(v -> viewFile());
@@ -752,6 +756,48 @@ public class MainActivity extends AppCompatActivity {
         } finally {
             document.close();
         }
+    }
+
+    /** "טופס": fills the power-of-attorney form (bundled in assets) from the selected source PDF. */
+    private void createPowerOfAttorney() {
+        if (sourceUri == null) {
+            status.setText("יש לבחור קודם PDF מקור (רישיון רכב).");
+            return;
+        }
+        status.setText("יוצר טופס...");
+        try {
+            Fields f = readFields(sourceUri);
+            File directory = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+            if (directory == null) directory = getFilesDir();
+            File output = new File(directory, "BuildHubs_Form_" + System.currentTimeMillis() + ".pdf");
+
+            try (InputStream template = getAssets().open("poa_template.pdf");
+                 PDDocument document = PDDocument.load(template)) {
+                try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
+                    PowerOfAttorneyFiller.fill(document, familyFirst(f.owner), f.id, f.vehicle, fontInput);
+                }
+                document.save(output);
+            }
+
+            lastOutput = output;
+            viewButton.setEnabled(true);
+            showPreview(output);
+            status.setText("נוצר טופס בהצלחה:\n" + output.getAbsolutePath());
+            share(output);
+        } catch (Exception e) {
+            Log.e(TAG, "Form failed", e);
+            status.setText("שגיאה: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+    }
+
+    /** The form asks for "family name, first name"; the app keeps owners as "first family". */
+    private String familyFirst(String owner) {
+        if (isEmpty(owner)) return owner;
+        String[] w = owner.trim().split(" +");
+        if (w.length < 2) return owner.trim();
+        StringBuilder sb = new StringBuilder(w[w.length - 1]);
+        for (int i = 0; i < w.length - 1; i++) sb.append(' ').append(w[i]);
+        return sb.toString();
     }
 
     private void showPreview(File file) {
