@@ -196,6 +196,10 @@ public class MainActivity extends AppCompatActivity {
         shareAllButton.setOnClickListener(v -> shareAll());
         root.addView(shareAllButton);
 
+        Button shareImageButton = button("שיתוף כתמונה");
+        shareImageButton.setOnClickListener(v -> shareInsuranceAsImage());
+        root.addView(shareImageButton);
+
         status = label("הערכים שיועתקו: בעלים, ת.ז., מספר רכב, מען, שנת ייצור, נפח, תוצר ומספר שילדה.");
         root.addView(status);
 
@@ -811,6 +815,52 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e(TAG, "Share all failed", e);
             status.setText("שגיאה בשיתוף: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+    }
+
+    /** "שיתוף כתמונה": renders page 1 of the insurance PDF to a PNG and shares only that image. */
+    private void shareInsuranceAsImage() {
+        if (lastInsurance == null || !lastInsurance.exists()) {
+            status.setText("יש ליצור קודם את הביטוח (כפתור 3).");
+            return;
+        }
+        try {
+            File base = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+            if (base == null) base = getFilesDir();
+            File dir = new File(base, "share");
+            if (!dir.exists() && !dir.mkdirs()) throw new Exception("לא ניתן ליצור תיקייה זמנית");
+            String plate = isEmpty(lastPlate) ? "" : "_" + lastPlate.trim();
+            File png = new File(dir, "ביטוח" + plate + ".png");
+
+            try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(lastInsurance, ParcelFileDescriptor.MODE_READ_ONLY);
+                 PdfRenderer renderer = new PdfRenderer(fd)) {
+                if (renderer.getPageCount() == 0) throw new Exception("ה-PDF ריק");
+                PdfRenderer.Page page = renderer.openPage(0);
+                try {
+                    float scale = 2.5f; // about 180 dpi: sharp enough to read, small enough to send
+                    int w = Math.round(page.getWidth() * scale);
+                    int h = Math.round(page.getHeight() * scale);
+                    Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                    bitmap.eraseColor(Color.WHITE);
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                    try (FileOutputStream out = new FileOutputStream(png)) {
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+                    }
+                } finally {
+                    page.close();
+                }
+            }
+
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".provider", png);
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("image/png");
+            send.putExtra(Intent.EXTRA_STREAM, uri);
+            send.setClipData(android.content.ClipData.newRawUri(png.getName(), uri));
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(send, "שיתוף כתמונה"));
+        } catch (Exception e) {
+            Log.e(TAG, "Share as image failed", e);
+            status.setText("שגיאה בשיתוף כתמונה: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
         }
     }
 
