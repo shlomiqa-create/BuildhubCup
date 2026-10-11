@@ -24,9 +24,11 @@ public final class LicenseParser {
 
     private LicenseParser() {}
 
-    private static final class Item {
+    static final class Item {
         String str;
         float x, y; // x = left edge, y = baseline measured from the page top
+        Item() {}
+        Item(String str, float x, float y) { this.str = str; this.x = x; this.y = y; }
     }
 
     private static final Pattern HEB = Pattern.compile("[\\u0590-\\u05FF]");
@@ -38,6 +40,11 @@ public final class LicenseParser {
     }
 
     static VehicleParser.Fields extract(List<Item> items) {
+        return extract(items, 600f);
+    }
+
+    /** @param makerMaxX values of the maker box start left of this x (OCR images also contain the printed label) */
+    static VehicleParser.Fields extract(List<Item> items, float makerMaxX) {
         Item anchor = null;
         for (Item i : items) {
             if (i.str.matches("\\d{5,8}") && i.x > 420 && i.y < 140) {
@@ -88,7 +95,7 @@ public final class LicenseParser {
 
         // maker (lower box, right column)
         List<String> mk = new ArrayList<>();
-        for (Item i : row(items, 337, 6, 400, 600, dy)) mk.add(i.str);
+        for (Item i : row(items, 337, 6, 400, makerMaxX, dy)) mk.add(i.str);
         f.make = join(mk);
 
         return f;

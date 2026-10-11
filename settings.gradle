@@ -1,4 +1,15 @@
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        // Tesseract4Android (OCR) is published on JitPack only; restrict that repository to its own group
+        maven {
+            url 'https://jitpack.io'
+            content { includeGroup 'com.github.adaptech-cz.Tesseract4Android' }
+        }
+    }
+}
 rootProject.name='Build Hubs'
 include ':app'

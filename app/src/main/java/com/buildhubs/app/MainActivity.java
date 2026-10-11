@@ -2,8 +2,11 @@ package com.buildhubs.app;
 
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.pdf.PdfRenderer;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -11,6 +14,7 @@ import android.os.ParcelFileDescriptor;
 import android.util.Log;
 import android.view.Gravity;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -161,10 +165,10 @@ public class MainActivity extends AppCompatActivity {
 
         sourceLabel = label("לא נבחר PDF מקור");
         root.addView(sourceLabel);
-        Button sourceButton = button("1. בחירת PDF מקור");
+        Button sourceButton = button("1. בחירת רישיון (PDF או תמונה)");
         sourceButton.setOnClickListener(v -> {
             pickingSource = true;
-            picker.launch(new String[]{"application/pdf"});
+            picker.launch(new String[]{"application/pdf", "image/*"});
         });
         root.addView(sourceButton);
 
@@ -253,9 +257,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        status.setText("קורא את PDF המקור...");
-        try {
-            Fields fields = readFields(sourceUri);
+        withFields("קורא את הרישיון...", fields -> {
             File directory = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
             if (directory == null) directory = getFilesDir();
             File output = new File(directory, "BuildHubs_" + System.currentTimeMillis() + ".pdf");
@@ -267,13 +269,117 @@ public class MainActivity extends AppCompatActivity {
             lastPlate = fields.vehicle;
             status.setText("נוצר PDF חדש בהצלחה:\n" + output.getAbsolutePath()
                     + "\nלשיתוף: כפתורי \"שיתוף\" או \"שיתוף כתמונה\".");
+        });
+    }
+
+    /** Work that needs the recognised fields. */
+    private interface FieldsTask {
+        void run(Fields fields) throws Exception;
+    }
+
+    private boolean busy;
+
+    /**
+     * Reads the source (a PDF, or an image through OCR) on a background thread, then runs the task on the UI thread.
+     * Fields that came from OCR are shown for confirmation / editing first, because OCR can misread digits.
+     */
+    private void withFields(String busyText, final FieldsTask task) {
+        if (busy) {
+            status.setText("עדיין מעבד, נא להמתין...");
+            return;
+        }
+        busy = true;
+        status.setText(busyText);
+        final Uri uri = sourceUri;
+        new Thread(() -> {
+            Fields read = null;
+            Throwable error = null;
+            try {
+                read = readFields(uri);
+            } catch (OutOfMemoryError e) {
+                error = new Exception("אין מספיק זיכרון לעיבוד התמונה. נסה תמונה קטנה יותר.");
+            } catch (Exception e) {
+                error = e;
+            }
+            final Fields fields = read;
+            final Throwable failure = error;
+            runOnUiThread(() -> {
+                busy = false;
+                if (failure != null) {
+                    showError(failure);
+                } else if (fields.fromOcr) {
+                    confirmFields(fields, task);
+                } else {
+                    runTask(task, fields);
+                }
+            });
+        }).start();
+    }
+
+    private void runTask(FieldsTask task, Fields fields) {
+        try {
+            task.run(fields);
         } catch (Exception e) {
-            Log.e(TAG, "Operation failed", e);
-            status.setText("שגיאה: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
+            showError(e);
         }
     }
 
+    private void showError(Throwable e) {
+        Log.e(TAG, "Operation failed", e);
+        status.setText("שגיאה: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
+    }
+
+    /** Shows the OCR result in editable boxes so a misread digit can be fixed before the PDF is written. */
+    private void confirmFields(final Fields f, final FieldsTask task) {
+        String[] labels = {"בעלים", "תעודת זהות", "מספר רכב", "מען", "שנת ייצור", "נפח", "תוצר", "מספר שילדה"};
+        String[] values = {f.owner, f.id, f.vehicle, f.address, f.year, f.engine, f.make, f.vin};
+        final EditText[] boxes = new EditText[labels.length];
+
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setPadding(40, 20, 40, 0);
+        TextView hint = new TextView(this);
+        hint.setText("הנתונים זוהו מתמונה. בדוק ותקן לפני היצירה:");
+        column.addView(hint);
+        for (int i = 0; i < labels.length; i++) {
+            TextView label = new TextView(this);
+            label.setText(labels[i]);
+            label.setPadding(0, 16, 0, 0);
+            column.addView(label);
+            boxes[i] = new EditText(this);
+            boxes[i].setText(values[i] == null ? "" : values[i]);
+            boxes[i].setSingleLine(i != 3);
+            column.addView(boxes[i]);
+        }
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(column);
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("אישור נתונים")
+                .setView(scroll)
+                .setPositiveButton("אישור", (dialog, which) -> {
+                    Fields confirmed = new Fields();
+                    confirmed.owner = boxes[0].getText().toString().trim();
+                    confirmed.id = boxes[1].getText().toString().trim();
+                    confirmed.vehicle = boxes[2].getText().toString().trim();
+                    confirmed.address = boxes[3].getText().toString().trim();
+                    confirmed.year = boxes[4].getText().toString().trim();
+                    confirmed.engine = boxes[5].getText().toString().trim();
+                    confirmed.make = boxes[6].getText().toString().trim();
+                    confirmed.vin = boxes[7].getText().toString().trim().toUpperCase(Locale.US);
+                    runTask(task, confirmed);
+                })
+                .setNegativeButton("ביטול", (dialog, which) -> status.setText("בוטל."))
+                .show();
+    }
+
+    /** The source can be a PDF (text read directly) or an image (read by OCR). Runs on a background thread. */
     private Fields readFields(Uri uri) throws Exception {
+        String type = getContentResolver().getType(uri);
+        if (type != null && type.startsWith("image/")) {
+            return ocrFields(decodeImage(uri));
+        }
+
         String sortedText;
         String unsortedText;
 
@@ -326,10 +432,110 @@ public class MainActivity extends AppCompatActivity {
         if (isEmpty(fields.vin)) missing.add("מספר שילדה");
 
         if (!missing.isEmpty()) {
+            // A scanned PDF has no text layer at all: read the rendered page by OCR instead.
+            if (fields.count() <= 2) {
+                Fields scanned = ocrFromPdf(uri);
+                if (scanned != null) return scanned;
+            }
             throw new Exception("לא הצלחתי לזהות את השדות: " + join(missing) +
                     "\nנשמר קובץ אבחון: BuildHubs_ExtractedText.txt");
         }
         return fields;
+    }
+
+    // ---------- OCR of images / scanned PDFs ----------
+
+    private Fields ocrFields(Bitmap bitmap) throws Exception {
+        VehicleParser.Fields r = OcrReader.readLicense(this, bitmap);
+        if (r == null) {
+            throw new Exception("לא זוהה רישיון רכב בתמונה. צלם את כל הדף ישר ובתאורה טובה, או בחר PDF.");
+        }
+        Fields f = new Fields();
+        f.owner = r.owner;
+        f.id = r.id;
+        f.vehicle = r.vehicle;
+        f.address = r.address;
+        f.year = r.year;
+        f.engine = r.engine;
+        f.make = r.make;
+        f.vin = r.vin;
+        f.fromOcr = true;
+        Log.d(TAG, "OCR result\n" + f.toDebugString());
+        return f;
+    }
+
+    /** Decodes a photo (down-sampled to keep memory low) and applies its EXIF rotation. */
+    private Bitmap decodeImage(Uri uri) throws Exception {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) throw new Exception("לא ניתן לפתוח את התמונה.");
+            BitmapFactory.decodeStream(in, null, bounds);
+        }
+        int sample = 1;
+        while (Math.max(bounds.outWidth, bounds.outHeight) / sample > 3600) sample *= 2;
+
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = sample;
+        opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        Bitmap bitmap;
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) throw new Exception("לא ניתן לפתוח את התמונה.");
+            bitmap = BitmapFactory.decodeStream(in, null, opts);
+        }
+        if (bitmap == null) throw new Exception("הקובץ אינו תמונה תקינה.");
+
+        int degrees = 0;
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in != null) {
+                int o = new ExifInterface(in).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+                if (o == ExifInterface.ORIENTATION_ROTATE_90) degrees = 90;
+                else if (o == ExifInterface.ORIENTATION_ROTATE_180) degrees = 180;
+                else if (o == ExifInterface.ORIENTATION_ROTATE_270) degrees = 270;
+            }
+        } catch (Exception ignored) { }
+        if (degrees != 0) {
+            Matrix m = new Matrix();
+            m.postRotate(degrees);
+            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), m, true);
+        }
+        return bitmap;
+    }
+
+    /** First page of a scanned PDF rendered to an image and read by OCR; null if it is not a license. */
+    private Fields ocrFromPdf(Uri uri) {
+        File temp = null;
+        try {
+            temp = File.createTempFile("source", ".pdf", getCacheDir());
+            try (InputStream in = getContentResolver().openInputStream(uri);
+                 FileOutputStream out = new FileOutputStream(temp)) {
+                if (in == null) return null;
+                byte[] buf = new byte[16384];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(temp, ParcelFileDescriptor.MODE_READ_ONLY);
+                 PdfRenderer renderer = new PdfRenderer(fd)) {
+                if (renderer.getPageCount() == 0) return null;
+                PdfRenderer.Page page = renderer.openPage(0);
+                Bitmap bitmap;
+                try {
+                    int w = 2480;
+                    int h = Math.round(w * (float) page.getHeight() / page.getWidth());
+                    bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                    bitmap.eraseColor(Color.WHITE);
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                } finally {
+                    page.close();
+                }
+                return ocrFields(bitmap);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "OCR of the PDF failed", e);
+            return null;
+        } finally {
+            if (temp != null) temp.delete();
+        }
     }
 
     private Fields extractFields(String text) {
@@ -793,7 +999,10 @@ public class MainActivity extends AppCompatActivity {
             if (!dir.exists() && !dir.mkdirs()) throw new Exception("לא ניתן ליצור תיקייה זמנית");
             String plate = isEmpty(lastPlate) ? "" : "_" + lastPlate.trim();
 
-            File license = new File(dir, "רישיון_רכב" + plate + ".pdf");
+            String sourceType = getContentResolver().getType(sourceUri);
+            final boolean licenseIsImage = sourceType != null && sourceType.startsWith("image/");
+            String licenseExt = !licenseIsImage ? ".pdf" : (sourceType.contains("png") ? ".png" : ".jpg");
+            File license = new File(dir, "רישיון_רכב" + plate + licenseExt);
             try (InputStream in = getContentResolver().openInputStream(sourceUri);
                  FileOutputStream out = new FileOutputStream(license)) {
                 if (in == null) throw new Exception("לא ניתן לקרוא את קובץ הרישיון");
@@ -809,7 +1018,7 @@ public class MainActivity extends AppCompatActivity {
                 uris.add(FileProvider.getUriForFile(this, getPackageName() + ".provider", f));
             }
             Intent send = new Intent(Intent.ACTION_SEND_MULTIPLE);
-            send.setType("application/pdf");
+            send.setType(licenseIsImage ? "*/*" : "application/pdf"); // an image license makes the share mixed
             send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
             android.content.ClipData clip = android.content.ClipData.newRawUri("pdf", uris.get(0));
             for (int i = 1; i < uris.size(); i++) clip.addItem(new android.content.ClipData.Item(uris.get(i)));
@@ -884,9 +1093,7 @@ public class MainActivity extends AppCompatActivity {
             status.setText("יש לבחור קודם PDF מקור (רישיון רכב).");
             return;
         }
-        status.setText("יוצר טופס...");
-        try {
-            Fields f = readFields(sourceUri);
+        withFields("יוצר טופס...", f -> {
             File directory = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
             if (directory == null) directory = getFilesDir();
             File output = new File(directory, "BuildHubs_Form_" + System.currentTimeMillis() + ".pdf");
@@ -906,10 +1113,7 @@ public class MainActivity extends AppCompatActivity {
             lastPlate = f.vehicle;
             status.setText("נוצר טופס בהצלחה:\n" + output.getAbsolutePath()
                     + "\nלשיתוף: כפתור \"שיתוף\".");
-        } catch (Exception e) {
-            Log.e(TAG, "Form failed", e);
-            status.setText("שגיאה: " + (isEmpty(e.getMessage()) ? e.getClass().getSimpleName() : e.getMessage()));
-        }
+        });
     }
 
     private void showPreview(File file) {
@@ -1088,6 +1292,15 @@ public class MainActivity extends AppCompatActivity {
         String engine;
         String make;
         String vin;
+        boolean fromOcr; // recognised from an image: shown for confirmation before use
+
+        int count() {
+            int n = 0;
+            for (String s : new String[]{owner, id, vehicle, address, year, engine, make, vin}) {
+                if (s != null && !s.trim().isEmpty()) n++;
+            }
+            return n;
+        }
 
         String toDebugString() {
             return "===== EXTRACTED FIELDS =====" +

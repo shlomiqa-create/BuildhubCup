@@ -10,6 +10,8 @@ android {
         targetSdk 35
         versionCode 1
         versionName '1.0'
+        // OCR native libraries: only the phone architectures (keeps the APK smaller)
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
     }
 }
 
@@ -22,5 +24,6 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.core:core:1.15.0'
     implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
+    implementation 'com.github.adaptech-cz.Tesseract4Android:tesseract4android:4.7.0'
 
 }
