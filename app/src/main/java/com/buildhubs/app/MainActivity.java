@@ -22,10 +22,14 @@ import android.widget.Space;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.IntentSenderRequest;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
 
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions;
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning;
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult;
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
 import com.tom_roush.pdfbox.pdmodel.PDDocument;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
@@ -63,6 +67,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView targetLabel;
     private TextView status;
     private ActivityResultLauncher<String[]> picker;
+    private ActivityResultLauncher<IntentSenderRequest> scannerLauncher;
     private boolean pickingSource;
     private File lastOutput;
     private File lastInsurance;
@@ -127,6 +132,15 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void registerPicker() {
+        scannerLauncher = registerForActivityResult(new ActivityResultContracts.StartIntentSenderForResult(), result -> {
+            if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
+            GmsDocumentScanningResult scan = GmsDocumentScanningResult.fromActivityResultIntent(result.getData());
+            if (scan == null || scan.getPages() == null || scan.getPages().isEmpty()) return;
+            sourceUri = scan.getPages().get(0).getImageUri();
+            sourceLabel.setText("מקור: סריקה");
+            status.setText("הסריקה נקלטה. כעת לחץ על 3 (ביטוח) או על \"טופס\".");
+        });
+
         picker = registerForActivityResult(new ActivityResultContracts.OpenDocument(), uri -> {
             if (uri == null) return;
             try {
@@ -171,6 +185,11 @@ public class MainActivity extends AppCompatActivity {
             picker.launch(new String[]{"application/pdf", "image/*"});
         });
         root.addView(sourceButton);
+
+        // Document scanner (ML Kit): camera or gallery, finds the page edges, straightens it, removes shadows.
+        Button scanButton = button("סריקה (מצלמה / גלריה)");
+        scanButton.setOnClickListener(v -> startScanner());
+        root.addView(scanButton);
 
         targetLabel = label("לא נבחר PDF יעד");
         root.addView(targetLabel);
@@ -375,8 +394,7 @@ public class MainActivity extends AppCompatActivity {
 
     /** The source can be a PDF (text read directly) or an image (read by OCR). Runs on a background thread. */
     private Fields readFields(Uri uri) throws Exception {
-        String type = getContentResolver().getType(uri);
-        if (type != null && type.startsWith("image/")) {
+        if (!looksLikePdf(uri)) { // a photo / scan (JPEG, PNG...): read it by OCR
             return ocrFields(decodeImage(uri));
         }
 
@@ -443,12 +461,42 @@ public class MainActivity extends AppCompatActivity {
         return fields;
     }
 
+    // ---------- document scanner ----------
+
+    private void startScanner() {
+        GmsDocumentScannerOptions options = new GmsDocumentScannerOptions.Builder()
+                .setGalleryImportAllowed(true)
+                .setPageLimit(1)
+                .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG)
+                .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+                .build();
+        GmsDocumentScanning.getClient(options)
+                .getStartScanIntent(this)
+                .addOnSuccessListener(sender -> scannerLauncher.launch(new IntentSenderRequest.Builder(sender).build()))
+                .addOnFailureListener(e -> {
+                    Log.w(TAG, "Scanner unavailable", e);
+                    status.setText("הסורק אינו זמין במכשיר זה (נדרשים שירותי Google Play). בחר תמונה או PDF בכפתור 1.");
+                });
+    }
+
+    /** True when the file starts with the PDF signature; works for content:// and file:// addresses alike. */
+    private boolean looksLikePdf(Uri uri) {
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) return false;
+            byte[] head = new byte[5];
+            int n = in.read(head);
+            return n == 5 && head[0] == '%' && head[1] == 'P' && head[2] == 'D' && head[3] == 'F' && head[4] == '-';
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     // ---------- OCR of images / scanned PDFs ----------
 
     private Fields ocrFields(Bitmap bitmap) throws Exception {
         VehicleParser.Fields r = OcrReader.readLicense(this, bitmap);
         if (r == null) {
-            throw new Exception("לא זוהה רישיון רכב בתמונה. צלם את כל הדף ישר ובתאורה טובה, או בחר PDF.");
+            throw new Exception("לא זוהה רישיון רכב בתמונה. נסה את כפתור \"סריקה\" (מזהה את הדף ומיישר אותו), או בחר PDF.");
         }
         Fields f = new Fields();
         f.owner = r.owner;
@@ -999,9 +1047,9 @@ public class MainActivity extends AppCompatActivity {
             if (!dir.exists() && !dir.mkdirs()) throw new Exception("לא ניתן ליצור תיקייה זמנית");
             String plate = isEmpty(lastPlate) ? "" : "_" + lastPlate.trim();
 
+            final boolean licenseIsImage = !looksLikePdf(sourceUri);
             String sourceType = getContentResolver().getType(sourceUri);
-            final boolean licenseIsImage = sourceType != null && sourceType.startsWith("image/");
-            String licenseExt = !licenseIsImage ? ".pdf" : (sourceType.contains("png") ? ".png" : ".jpg");
+            String licenseExt = !licenseIsImage ? ".pdf" : (sourceType != null && sourceType.contains("png") ? ".png" : ".jpg");
             File license = new File(dir, "רישיון_רכב" + plate + licenseExt);
             try (InputStream in = getContentResolver().openInputStream(sourceUri);
                  FileOutputStream out = new FileOutputStream(license)) {
