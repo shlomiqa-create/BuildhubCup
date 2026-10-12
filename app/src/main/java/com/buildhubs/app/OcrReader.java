@@ -17,6 +17,12 @@ import java.util.List;
 /**
  * OCR of a vehicle license photo / scan / screenshot (Tesseract, Hebrew + English models bundled in assets).
  * Everything here is slow (seconds): call it from a background thread.
+ *
+ * Up to three attempts are made, stopping as soon as the result looks complete:
+ *   A. the image as it is, normal page analysis;
+ *   B. the same image with "sparse text" analysis (copes with ruled lines / banners that confuse A);
+ *   C. the image cropped to the sheet of paper.
+ * The attempts are merged field by field ({@link OcrLicenseParser#merge}).
  */
 public final class OcrReader {
 
@@ -31,16 +37,43 @@ public final class OcrReader {
      */
     public static VehicleParser.Fields readLicense(Context context, Bitmap source) throws Exception {
         String dataPath = prepareTessData(context).getAbsolutePath();
-        final Bitmap[] work = {preparePage(source)}; // the image being read (replaced when it is resized)
-        final Bitmap first = work[0];
 
         final TessBaseAPI main = new TessBaseAPI();   // heb + eng: the full page
         final TessBaseAPI digits = new TessBaseAPI(); // eng: digits / chassis crops
+        Bitmap plain = null;
+        Bitmap cropped = null;
         try {
             if (!main.init(dataPath, "heb+eng") || !digits.init(dataPath, "eng")) {
                 throw new Exception("לא ניתן לטעון את מנוע הזיהוי (OCR).");
             }
-            main.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO);
+
+            plain = preparePage(source, false);
+            VehicleParser.Fields best = attempt(main, digits, plain, TessBaseAPI.PageSegMode.PSM_AUTO);
+
+            if (!OcrLicenseParser.isGood(best)) {
+                best = OcrLicenseParser.merge(best, attempt(main, digits, plain, TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT));
+            }
+            if (!OcrLicenseParser.isGood(best)) {
+                cropped = preparePage(source, true);
+                if (cropped != null) {
+                    best = OcrLicenseParser.merge(best, attempt(main, digits, cropped, TessBaseAPI.PageSegMode.PSM_AUTO));
+                }
+            }
+            return best;
+        } finally {
+            main.recycle();
+            digits.recycle();
+            if (plain != null && plain != source) plain.recycle();
+            if (cropped != null && cropped != source) cropped.recycle();
+        }
+    }
+
+    /** One OCR pass over a prepared page: read, normalise the text size if needed, parse. */
+    private static VehicleParser.Fields attempt(final TessBaseAPI main, final TessBaseAPI digits,
+                                                Bitmap page, int segmentationMode) {
+        final Bitmap[] work = {page};
+        try {
+            main.setPageSegMode(segmentationMode);
             main.setImage(work[0]);
             String hocr = main.getHOCRText(0);
             List<OcrLicenseParser.Word> words = OcrLicenseParser.parseHocr(hocr);
@@ -53,9 +86,8 @@ public final class OcrReader {
                 float factor = 4.17f / scale;
                 int w = Math.max(200, Math.round(work[0].getWidth() * factor));
                 int h = Math.max(200, Math.round(work[0].getHeight() * factor));
-                Bitmap resized = Bitmap.createScaledBitmap(work[0], w, h, true);
-                work[0] = resized;
-                main.setImage(resized);
+                work[0] = Bitmap.createScaledBitmap(page, w, h, true);
+                main.setImage(work[0]);
                 hocr = main.getHOCRText(0);
                 words = OcrLicenseParser.parseHocr(hocr);
                 tilt = OcrLicenseParser.hocrTilt(hocr);
@@ -69,10 +101,8 @@ public final class OcrReader {
             };
             return OcrLicenseParser.parse(words, work[0].getWidth(), work[0].getHeight(), tilt, refiner);
         } finally {
-            main.recycle();
-            digits.recycle();
-            if (work[0] != first) work[0].recycle();
-            if (first != source) first.recycle();
+            if (work[0] != page) work[0].recycle();
+            main.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO);
         }
     }
 
@@ -107,13 +137,17 @@ public final class OcrReader {
 
     // ---- image preparation ----
 
-    /** Crop to the paper, scale to ~300 dpi, brighten dim photos. */
-    static Bitmap preparePage(Bitmap source) {
-        Bitmap paper = cropPaper(source);
+    /**
+     * Scale to ~300 dpi and brighten dim photos; optionally crop to the sheet of paper first.
+     * @return the prepared page, or null when a crop was asked for but no sheet of paper was found
+     */
+    static Bitmap preparePage(Bitmap source, boolean crop) {
+        Bitmap base = crop ? cropPaper(source) : source;
+        if (base == null) return null;
         int w = TARGET_WIDTH;
-        int h = Math.round(paper.getHeight() * (w / (float) paper.getWidth()));
-        Bitmap scaled = Bitmap.createScaledBitmap(paper, w, h, true);
-        if (paper != source && paper != scaled) paper.recycle();
+        int h = Math.round(base.getHeight() * (w / (float) base.getWidth()));
+        Bitmap scaled = Bitmap.createScaledBitmap(base, w, h, true);
+        if (base != source && base != scaled) base.recycle();
         if (!scaled.isMutable()) scaled = scaled.copy(Bitmap.Config.ARGB_8888, true);
 
         int[] pixels = new int[w * h];
@@ -131,7 +165,7 @@ public final class OcrReader {
         return scaled;
     }
 
-    /** Finds the sheet of paper in a photo (dark table around it) using a small copy of the image. */
+    /** Finds the sheet of paper in a photo (dark table around it) using a small copy of the image; null if none. */
     private static Bitmap cropPaper(Bitmap src) {
         int sw = src.getWidth(), sh = src.getHeight();
         float shrink = Math.max(1f, Math.max(sw, sh) / 500f);
@@ -144,12 +178,12 @@ public final class OcrReader {
         for (int i = 0; i < px.length; i++) lum[i] = ImagePrep.luminance(px[i]);
 
         int[] box = PaperCrop.findPaper(lum, tw, th);
-        if (box == null) return src;
+        if (box == null) return null;
         int x0 = Math.max(0, Math.round(box[0] * (sw / (float) tw)));
         int y0 = Math.max(0, Math.round(box[1] * (sh / (float) th)));
         int x1 = Math.min(sw, Math.round(box[2] * (sw / (float) tw)));
         int y1 = Math.min(sh, Math.round(box[3] * (sh / (float) th)));
-        if (x1 - x0 < 100 || y1 - y0 < 100) return src;
+        if (x1 - x0 < 100 || y1 - y0 < 100) return null;
         return Bitmap.createBitmap(src, x0, y0, x1 - x0, y1 - y0);
     }
 

@@ -362,7 +362,7 @@ public final class OcrLicenseParser {
             for (int i = 0; i < cand.size(); i++) {
                 if (used[i] || !fits(sl.type, cand.get(i).text)) continue;
                 float dx = (cand.get(i).X - eX) / fr.s, dy = (cand.get(i).Y - eY) / fr.s;
-                if (Math.abs(dx) > 10f || Math.abs(dy) > 8f) continue;
+                if (Math.abs(dx) > 16f || Math.abs(dy) > 12f) continue;
                 float d = dx * dx + dy * dy;
                 if (d < bestD) { bestD = d; bestIdx = i; }
             }
@@ -498,7 +498,7 @@ public final class OcrLicenseParser {
     /** Hebrew tokens are kept; Latin / digit tokens lose stray OCR symbols. */
     private static String clean(String s) {
         s = s.replaceAll("[\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]", "").trim();
-        if (HEB.matcher(s).find()) return s.replaceAll("[|\\[\\]{}<>_=\"]", "").trim();
+        if (HEB.matcher(s).find()) return s.replaceAll("[|\\[\\]{}<>_=\"?;:~^*,]", "").trim();
         return s.replaceAll("[^A-Za-z0-9/.\\-]", "").trim();
     }
 
@@ -521,7 +521,7 @@ public final class OcrLicenseParser {
         // The ID has a check digit: of several reads of the same cell (slightly different crops) keep a valid one.
         if (f.id == null || !validId(f.id)) {
             float[][] crops = {{168f, 73f, 255f, 89f}, {160f, 72f, 262f, 90f}, {172f, 74f, 250f, 88f}, {165f, 70f, 258f, 92f},
-                    {170f, 71f, 256f, 91f}, {164f, 75f, 252f, 87f}};
+                    {170f, 71f, 256f, 91f}, {164f, 75f, 252f, 87f}, {150f, 70f, 275f, 92f}, {140f, 70f, 290f, 94f}};
             List<String> reads = new ArrayList<>();
             if (f.id != null && f.id.matches("\\d{7,9}-\\d")) reads.add(f.id);
             String valid = null;
@@ -605,6 +605,74 @@ public final class OcrLicenseParser {
             }
         }
         return found == null ? null : found.substring(0, found.length() - 1) + "-" + found.charAt(found.length() - 1);
+    }
+
+    // ---- choosing between several OCR attempts ----
+
+    /** Printed words that are not values (a label row read by mistake). */
+    private static final String[] NOT_A_VALUE = {"כינוי", "מסחרי", "הספק", "בקרת", "כריות", "דרגת", "רמת", "קבוצת", "מרכב", "גימור"};
+
+    /**
+     * How trustworthy a result looks, in half points: one per filled field (max 8), plus bonuses for a valid ID
+     * check digit, a 17-character chassis and a 7-8 digit plate, minus penalties for obvious junk.
+     */
+    public static int quality(VehicleParser.Fields f) {
+        if (f == null) return -1;
+        int q = 0;
+        String[] all = {f.owner, f.id, f.vehicle, f.address, f.year, f.engine, f.make, f.vin};
+        for (String s : all) if (s != null && !s.trim().isEmpty()) q += 2;
+        if (validId(f.id)) q += 3;
+        if (f.vin != null && f.vin.length() == 14) q += 2;
+        if (f.vehicle != null && f.vehicle.matches("\\d{7,8}")) q += 1;
+        if (f.year != null && f.year.matches("(19|20)\\d{2}")) q += 1;
+        // a name made of a single letter is a cut-off word ("כהן א")
+        if (f.owner != null) for (String w : f.owner.trim().split(" +")) if (w.length() == 1) { q -= 3; break; }
+        for (String s : new String[]{f.owner, f.address, f.make}) {
+            if (s == null) continue;
+            if (s.matches(".*[A-Za-z].*")) q -= 3;
+            for (String w : NOT_A_VALUE) if (s.contains(w)) { q -= 4; break; }
+        }
+        return q;
+    }
+
+    /** The result is complete enough that no further OCR attempt is needed. */
+    public static boolean isGood(VehicleParser.Fields f) {
+        return f != null && quality(f) >= 22;
+    }
+
+    /** Takes the better of two results and fills its gaps (empty or junk fields) from the other one. */
+    public static VehicleParser.Fields merge(VehicleParser.Fields a, VehicleParser.Fields b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        VehicleParser.Fields win = quality(a) >= quality(b) ? a : b;
+        VehicleParser.Fields lose = win == a ? b : a;
+        VehicleParser.Fields m = new VehicleParser.Fields();
+        m.owner = pickText(win.owner, lose.owner);
+        m.address = pickText(win.address, lose.address);
+        m.make = pickText(win.make, lose.make);
+        m.id = validId(win.id) || !validId(lose.id) ? pickValue(win.id, lose.id) : lose.id;
+        m.vehicle = pickValue(win.vehicle, lose.vehicle);
+        m.year = pickValue(win.year, lose.year);
+        m.engine = pickValue(win.engine, lose.engine);
+        m.vin = win.vin != null && win.vin.length() == 14 ? win.vin
+                : (lose.vin != null && lose.vin.length() == 14 ? lose.vin : pickValue(win.vin, lose.vin));
+        return m;
+    }
+
+    private static boolean empty(String s) {
+        return s == null || s.trim().isEmpty();
+    }
+
+    /** A number / code: the winner's value unless it is missing. */
+    private static String pickValue(String winner, String other) {
+        return empty(winner) ? other : winner;
+    }
+
+    /** A line of Hebrew text: the winner's value unless it is missing or junk (Latin letters, label words). */
+    private static String pickText(String winner, String other) {
+        boolean junk = empty(winner) || winner.matches(".*[A-Za-z].*");
+        for (String w : NOT_A_VALUE) if (!empty(winner) && winner.contains(w)) junk = true;
+        return junk && !empty(other) ? other : winner;
     }
 
     /** Israeli ID check digit: digits weighted 1,2,1,2..., two-digit products reduced, the total divisible by 10. */

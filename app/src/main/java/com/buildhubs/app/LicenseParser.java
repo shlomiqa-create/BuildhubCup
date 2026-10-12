@@ -68,13 +68,13 @@ public final class LicenseParser {
         f.address = join(ad); // postal code is kept
 
         // id
-        for (Item i : row(items, 84, 5, 100, 330, dy)) {
+        for (Item i : row(items, 84, 8, 100, 330, dy)) {
             if (i.str.matches("\\d{5,9}-?\\d")) { f.id = i.str; break; }
         }
 
         // year of manufacture
         List<String> yr = new ArrayList<>();
-        for (Item i : row(items, 132, 5, 380, 600, dy)) yr.add(i.str);
+        for (Item i : row(items, 132, 7, 380, 600, dy)) yr.add(i.str);
         Matcher ym = Pattern.compile("\\b(19|20)\\d{2}\\b").matcher(join(yr));
         if (ym.find()) f.year = ym.group();
 
@@ -90,7 +90,7 @@ public final class LicenseParser {
 
         // engine volume (may be empty, e.g. for trailers)
         List<String> vo = new ArrayList<>();
-        for (Item i : row(items, 156, 5, 350, 446, dy)) vo.add(i.str);
+        for (Item i : row(items, 156, 7, 350, 446, dy)) vo.add(i.str);
         Matcher vm = Pattern.compile("\\d{2,5}").matcher(join(vo));
         if (vm.find()) f.engine = vm.group();
 
