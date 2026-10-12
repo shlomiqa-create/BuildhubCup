@@ -31,7 +31,8 @@ public final class OcrReader {
      */
     public static VehicleParser.Fields readLicense(Context context, Bitmap source) throws Exception {
         String dataPath = prepareTessData(context).getAbsolutePath();
-        final Bitmap page = preparePage(source);
+        final Bitmap[] work = {preparePage(source)}; // the image being read (replaced when it is resized)
+        final Bitmap first = work[0];
 
         final TessBaseAPI main = new TessBaseAPI();   // heb + eng: the full page
         final TessBaseAPI digits = new TessBaseAPI(); // eng: digits / chassis crops
@@ -40,22 +41,38 @@ public final class OcrReader {
                 throw new Exception("לא ניתן לטעון את מנוע הזיהוי (OCR).");
             }
             main.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO);
-            main.setImage(page);
+            main.setImage(work[0]);
             String hocr = main.getHOCRText(0);
-
             List<OcrLicenseParser.Word> words = OcrLicenseParser.parseHocr(hocr);
             float tilt = OcrLicenseParser.hocrTilt(hocr);
+
+            // Normalise the text size (about 4.17 pixels per point = 300 dpi): a photo of part of the page
+            // or a small / large scan is resized and read again.
+            float scale = OcrLicenseParser.estimateScale(words, work[0].getWidth(), tilt);
+            if (!Float.isNaN(scale) && (scale < 3.6f || scale > 4.8f)) {
+                float factor = 4.17f / scale;
+                int w = Math.max(200, Math.round(work[0].getWidth() * factor));
+                int h = Math.max(200, Math.round(work[0].getHeight() * factor));
+                Bitmap resized = Bitmap.createScaledBitmap(work[0], w, h, true);
+                work[0] = resized;
+                main.setImage(resized);
+                hocr = main.getHOCRText(0);
+                words = OcrLicenseParser.parseHocr(hocr);
+                tilt = OcrLicenseParser.hocrTilt(hocr);
+            }
+
             OcrLicenseParser.Refiner refiner = new OcrLicenseParser.Refiner() {
                 @Override
                 public String read(float x0, float y0, float x1, float y1, String whitelist) {
-                    return readCrop(main, digits, page, x0, y0, x1, y1, whitelist);
+                    return readCrop(main, digits, work[0], x0, y0, x1, y1, whitelist);
                 }
             };
-            return OcrLicenseParser.parse(words, page.getWidth(), page.getHeight(), tilt, refiner);
+            return OcrLicenseParser.parse(words, work[0].getWidth(), work[0].getHeight(), tilt, refiner);
         } finally {
             main.recycle();
             digits.recycle();
-            if (page != source) page.recycle();
+            if (work[0] != first) work[0].recycle();
+            if (first != source) first.recycle();
         }
     }
 

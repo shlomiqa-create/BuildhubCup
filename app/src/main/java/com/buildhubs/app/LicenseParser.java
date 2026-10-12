@@ -80,12 +80,13 @@ public final class LicenseParser {
 
         // chassis: the Latin/digit groups on the chassis row, minus the first 3 characters
         StringBuilder ch = new StringBuilder();
-        List<Item> chRow = row(items, 132, 5, 60, 340, dy); // right-to-left
+        List<Item> chRow = row(items, 132, 8, 60, 340, dy); // right-to-left
         for (int k = chRow.size() - 1; k >= 0; k--) { // the chassis is Latin text: read left-to-right
             String s = chRow.get(k).str;
             if (s.matches("[A-Za-z0-9]+")) ch.append(s);
         }
-        if (ch.length() >= 6) f.vin = ch.substring(3).toUpperCase();
+        String chassis = bestChassisWindow(ch.toString());
+        if (chassis.length() >= 6) f.vin = chassis.substring(3).toUpperCase();
 
         // engine volume (may be empty, e.g. for trailers)
         List<String> vo = new ArrayList<>();
@@ -99,6 +100,31 @@ public final class LicenseParser {
         f.make = join(mk);
 
         return f;
+    }
+
+    /**
+     * A chassis number has 17 characters. When more were read (a stray character from a border or noise),
+     * the 17-character window that looks most like a chassis number is chosen: starts with a letter,
+     * has no I, O or Q, and ends with digits.
+     */
+    static String bestChassisWindow(String s) {
+        if (s.length() <= 17) return s;
+        String best = s.substring(0, 17);
+        int bestScore = Integer.MIN_VALUE;
+        for (int i = 0; i + 17 <= s.length(); i++) {
+            String w = s.substring(i, i + 17);
+            int score = 0;
+            if (Character.isLetter(w.charAt(0))) score += 3;
+            for (int j = 0; j < w.length(); j++) {
+                char c = Character.toUpperCase(w.charAt(j));
+                if (c == 'I' || c == 'O' || c == 'Q') score -= 5;
+            }
+            int digits = 0;
+            for (int j = w.length() - 1; j >= 0 && Character.isDigit(w.charAt(j)); j--) digits++;
+            score += Math.min(digits, 8);
+            if (score > bestScore) { bestScore = score; best = w; }
+        }
+        return best;
     }
 
     /** Words whose baseline is within tol of (y + dy) and whose left edge is in [xMin, xMax), right-to-left. */
