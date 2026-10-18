@@ -28,4 +28,7 @@ dependencies {
     // document scanner (finds the page, straightens it, removes shadows): needs Google Play services on the phone
     implementation 'com.google.android.gms:play-services-mlkit-document-scanner:16.0.0'
 
+    // unit tests (run in GitHub Actions before the APK is built); they use made-up data only
+    testImplementation 'junit:junit:4.13.2'
+
 }

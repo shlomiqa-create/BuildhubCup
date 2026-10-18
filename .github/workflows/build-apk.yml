@@ -16,6 +16,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Unit tests
+        run: gradle testDebugUnitTest --no-daemon
+      - name: Report failed tests
+        if: failure()
+        run: |
+          grep -h -B1 "<failure" app/build/test-results/testDebugUnitTest/*.xml 2>/dev/null | head -40 | sed 's/^/::error::/' || true
       - name: Build APK
         run: gradle assembleDebug --no-daemon
       - name: Upload APK
