@@ -33,13 +33,18 @@ public final class PdfFiller {
 
     public static void fill(PDDocument doc, String owner, String id, String vehicle, String address,
                             String year, String engine, String make, String vin, InputStream fontStream) throws IOException {
+        fill(doc, owner, id, vehicle, address, year, engine, make, vin, PDType0Font.load(doc, fontStream, true));
+    }
+
+    /** @param font a Hebrew font loaded once into this document and shared with the other writers (ExampleMark) */
+    public static void fill(PDDocument doc, String owner, String id, String vehicle, String address,
+                            String year, String engine, String make, String vin, PDType0Font font) throws IOException {
         PDPage page = doc.getPage(0);
         float pageH = page.getMediaBox().getHeight();
         float pageW = page.getMediaBox().getWidth();
         // Cell coordinates below were measured on A4 (595.28 x 841.89). Other page sizes
         // (e.g. a Letter copy with the form scaled to fit) are handled by uniform scaling.
         float k = Math.min(pageW / 595.276f, pageH / 841.89f);
-        PDType0Font font = PDType0Font.load(doc, fontStream, true);
 
         PDPageContentStream cs = new PDPageContentStream(doc, page,
                 PDPageContentStream.AppendMode.APPEND, true, true);

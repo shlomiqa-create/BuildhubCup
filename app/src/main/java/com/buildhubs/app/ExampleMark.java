@@ -11,11 +11,14 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * Marks every page of an insurance document as a study example: a large diagonal "דוגמה ללימוד" across the
- * page and a line at the bottom saying that it is not a valid insurance certificate.
+ * Marks every page of an insurance document as a study example: a large translucent diagonal "דוגמה ללימוד"
+ * across the page and a short line in the top margin saying that it is not a valid insurance certificate.
  *
  * Insurance certificates produced by the app are practice examples only; the mark is always added and cannot
  * be switched off, so they cannot be mistaken for a real certificate.
+ *
+ * The line is placed in the TOP margin: some forms have text right down to the bottom edge, and a line drawn
+ * there would overlap it and look garbled.
  */
 public final class ExampleMark {
 
@@ -25,12 +28,21 @@ public final class ExampleMark {
     static final String SMALL = "אינו תעודת ביטוח תקפה";
     static final String FOOTER = "מסמך לדוגמה ללימוד בלבד - אינו תעודת ביטוח תקפה";
 
-    /** TEMPORARY: switched off only to find out whether the mark is what looks garbled. Must be true again. */
-    static final boolean ENABLED = false;
+    /** Switched off only for a short diagnosis earlier; the mark must stay on. */
+    static final boolean ENABLED = true;
 
+    /** Distance of the note's baseline from the top edge of the page, in points. */
+    static final float NOTE_FROM_TOP = 11f;
+
+    /** Loads the font itself. Prefer {@link #apply(PDDocument, PDType0Font)} with the font already used for filling. */
     public static void apply(PDDocument doc, InputStream fontStream) throws IOException {
         if (!ENABLED) return;
-        PDType0Font font = PDType0Font.load(doc, fontStream, true);
+        apply(doc, PDType0Font.load(doc, fontStream, true));
+    }
+
+    /** @param font a Hebrew font already loaded into this document (the same file is never embedded twice) */
+    public static void apply(PDDocument doc, PDType0Font font) throws IOException {
+        if (!ENABLED) return;
         PDExtendedGraphicsState translucent = new PDExtendedGraphicsState();
         translucent.setNonStrokingAlphaConstant(0.22f);
 
@@ -46,19 +58,20 @@ public final class ExampleMark {
                 cs.setGraphicsStateParameters(translucent);
                 cs.setNonStrokingColor(200, 30, 30);
                 float angle = (float) Math.atan2(h, w) * 0.85f; // roughly along the page diagonal
-                diagonal(cs, font, BIG, w / 2f, h / 2f + 20f, angle, fitSize(font, BIG, 0.78f * (float) Math.hypot(w, h), 90f));
-                diagonal(cs, font, SMALL, w / 2f, h / 2f - 40f, angle, fitSize(font, SMALL, 0.62f * (float) Math.hypot(w, h), 36f));
+                float diagonal = (float) Math.hypot(w, h);
+                diagonal(cs, font, BIG, w / 2f, h / 2f + 20f, angle, fitSize(font, BIG, 0.78f * diagonal, 90f));
+                diagonal(cs, font, SMALL, w / 2f, h / 2f - 40f, angle, fitSize(font, SMALL, 0.62f * diagonal, 36f));
                 cs.restoreGraphicsState();
 
-                // footer line, opaque
-                String footer = PdfFiller.toVisual(FOOTER);
-                float size = 9f;
-                float fw = font.getStringWidth(footer) / 1000f * size;
+                // the note in the top margin, opaque
+                String note = PdfFiller.toVisual(FOOTER);
+                float size = 8.5f;
+                float nw = font.getStringWidth(note) / 1000f * size;
                 cs.setNonStrokingColor(160, 0, 0);
                 cs.beginText();
                 cs.setFont(font, size);
-                cs.newLineAtOffset((w - fw) / 2f, 12f);
-                cs.showText(footer);
+                cs.newLineAtOffset((w - nw) / 2f, h - NOTE_FROM_TOP);
+                cs.showText(note);
                 cs.endText();
             } finally {
                 cs.close();

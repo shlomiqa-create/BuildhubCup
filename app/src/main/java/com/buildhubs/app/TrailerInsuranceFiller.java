@@ -20,7 +20,27 @@ public final class TrailerInsuranceFiller {
 
     private TrailerInsuranceFiller() {}
 
+    /** The form is typed in Courier New 14 pt; the lighter Cousine looks the same at 12 pt; the replacement font (Cousine) has the same width, 0.6 em per character. */
     private static final float SIZE = 12f;
+    /** Cap height of the monospaced font relative to its size: used to centre the text vertically in its cell. */
+    private static final float CAP = 0.60f;
+
+    /** Table lines (maroon, 0.49 pt) that run under the old values: they are drawn again after the covers. */
+    private static final float[][] LINES = {
+            {501f, 222.5f, 574.5f, 222.5f},   // top: under the name
+            {361f, 185.7f, 423f, 185.7f},     // top: under the policy number row, above the ID
+            {396f, 264.9f, 571.5f, 264.9f},   // top: under the address
+            {511f, 290.3f, 554.5f, 290.3f},   // top: under the plate
+            {403f, 290.3f, 476f, 290.3f},     // top: under the maker
+            {448f, 316.4f, 467f, 316.4f},     // top: under the weight
+            {341f, 641.4f, 396.5f, 641.4f},   // bottom: under the ID
+            {517f, 665.1f, 566.5f, 665.1f},   // bottom: under the name
+            {303f, 688.0f, 568.5f, 688.0f},   // bottom: under the address
+            {305.2f, 675.5f, 305.2f, 688.1f}, // bottom: left edge of the address cell
+            {505f, 712.2f, 566.5f, 712.2f},   // bottom: under the plate
+            {419f, 712.2f, 493f, 712.2f},     // bottom: under the maker
+            {334.5f, 712.2f, 354f, 712.2f},   // bottom: under the weight
+    };
 
     /** One cell: the right edge of the text (RTL), the vertical centre and the width available. */
     private static final class Cell {
@@ -33,7 +53,7 @@ public final class TrailerInsuranceFiller {
     private static final Cell TOP_ID = new Cell(422f, 194.6f, 112f);
     private static final Cell TOP_ADDRESS = new Cell(575f, 256.8f, 265f);
     private static final Cell TOP_PLATE = new Cell(554f, 282.2f, 70f);
-    private static final Cell TOP_MAKER = new Cell(476f, 282.2f, 112f);
+    private static final Cell TOP_MAKER = new Cell(476f, 282.2f, 90f);
     private static final Cell TOP_WEIGHT = new Cell(467f, 308.3f, 55f);
 
     // ---- credit notice (bottom copy) ----
@@ -64,6 +84,7 @@ public final class TrailerInsuranceFiller {
 
     /**
      * @param makerModel the maker followed by the model, as one line
+     * @param fontStream a monospaced font with Hebrew (Cousine), like the Courier New of the form
      */
     public static void fill(PDDocument doc, String owner, String address, String plate, String id,
                             String weight, String makerModel, InputStream fontStream) throws IOException {
@@ -81,6 +102,14 @@ public final class TrailerInsuranceFiller {
             for (float[] c : COVERS) {
                 cs.addRect(c[0] * k, pageH - c[3] * k, (c[2] - c[0]) * k, (c[3] - c[1]) * k);
                 cs.fill();
+            }
+            // the covers also hid some table lines: draw them again
+            cs.setStrokingColor(122, 10, 59);
+            cs.setLineWidth(0.49f * k);
+            for (float[] l : LINES) {
+                cs.moveTo(l[0] * k, pageH - l[1] * k);
+                cs.lineTo(l[2] * k, pageH - l[3] * k);
+                cs.stroke();
             }
             cs.setNonStrokingColor(0, 0, 0);
             put(cs, font, pageH, k, TOP_NAME, owner);
@@ -113,7 +142,7 @@ public final class TrailerInsuranceFiller {
             w = font.getStringWidth(visual) / 1000f * size;
         }
         float x = c.right * k - w;
-        float baseline = pageH - (c.centerY * k + size * 0.36f);
+        float baseline = pageH - (c.centerY * k + size * CAP / 2f);
         cs.setNonStrokingColor(0, 0, 0);
         cs.beginText();
         cs.setFont(font, size);

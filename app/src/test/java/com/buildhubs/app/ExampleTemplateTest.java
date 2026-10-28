@@ -18,6 +18,17 @@ public class ExampleTemplateTest {
     }
 
     @Test
+    public void theMarkCannotBeLeftSwitchedOff() {
+        // it was switched off once for a diagnosis: a build with the mark off must never pass the tests
+        assertTrue(ExampleMark.ENABLED);
+    }
+
+    @Test
+    public void theNoteIsInTheTopMarginNotOverTheFormsFooter() {
+        assertTrue(ExampleMark.NOTE_FROM_TOP > 0f && ExampleMark.NOTE_FROM_TOP < 20f);
+    }
+
+    @Test
     public void markTextsAreConvertedForDrawing() {
         // the converted text is what is written into the PDF: it must differ from the logical order
         assertFalse(ExampleMark.BIG.equals(PdfFiller.toVisual(ExampleMark.BIG)));

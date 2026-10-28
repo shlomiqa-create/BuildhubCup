@@ -33,6 +33,7 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult;
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
 import com.tom_roush.pdfbox.pdmodel.PDDocument;
 import com.tom_roush.pdfbox.pdmodel.PDPage;
+import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
 
 import java.io.File;
@@ -1068,11 +1069,11 @@ public class MainActivity extends AppCompatActivity {
         try {
             if (document.getNumberOfPages() == 0) throw new Exception("PDF היעד ריק.");
             try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
+                // the font is loaded ONCE and shared: the fields and the example mark use the same embedded font
+                PDType0Font font = PDType0Font.load(document, fontInput, true);
                 PdfFiller.fill(document, f.owner, f.id, f.vehicle, f.address,
-                        f.year, f.engine, f.make, f.vin, fontInput);
-            }
-            try (InputStream markFont = getAssets().open("DejaVuSans.ttf")) {
-                ExampleMark.apply(document, markFont); // insurance documents are study examples
+                        f.year, f.engine, f.make, f.vin, font);
+                ExampleMark.apply(document, font); // insurance documents are study examples
             }
             document.save(output);
         } finally {
@@ -1278,7 +1279,7 @@ public class MainActivity extends AppCompatActivity {
             if (document.getNumberOfPages() == 0 || !looksLikeAyalonCertificate(document)) {
                 throw new Exception("הקובץ אינו תעודת ביטוח חובה של איילון בגודל A4. בחר את הטופס הנכון (לחיצה ארוכה על \"נגרר\").");
             }
-            try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
+            try (InputStream fontInput = getAssets().open("Cousine-Regular.ttf")) { // monospaced, like the form
                 TrailerInsuranceFiller.fill(document, owner, address, plate, id, weight, makerModel, fontInput);
             }
             try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
