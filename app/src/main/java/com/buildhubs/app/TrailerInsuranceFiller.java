@@ -20,10 +20,12 @@ public final class TrailerInsuranceFiller {
 
     private TrailerInsuranceFiller() {}
 
-    /** The form is typed in Courier New 14 pt; the lighter Cousine looks the same at 12 pt; the replacement font (Cousine) has the same width, 0.6 em per character. */
-    private static final float SIZE = 12f;
+    /** The form is typed in Courier New 10 pt (6 pt per character); Cousine has the same width, so the same size is used. */
+    private static final float SIZE = 10f;
     /** Cap height of the monospaced font relative to its size: used to centre the text vertically in its cell. */
     private static final float CAP = 0.60f;
+    /** Courier New has thin strokes; Cousine of the same size is heavier (about 1.8 times the ink; 85 is a compromise between the look and the weight), so the text is a dark gray to look as light as the form's own values. */
+    private static final int INK = 85;
 
     /** Table lines (maroon, 0.49 pt) that run under the old values: they are drawn again after the covers. */
     private static final float[][] LINES = {
@@ -143,7 +145,7 @@ public final class TrailerInsuranceFiller {
         }
         float x = c.right * k - w;
         float baseline = pageH - (c.centerY * k + size * CAP / 2f);
-        cs.setNonStrokingColor(0, 0, 0);
+        cs.setNonStrokingColor(INK, INK, INK);
         cs.beginText();
         cs.setFont(font, size);
         cs.newLineAtOffset(x, baseline);
