@@ -9,11 +9,11 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * Fills the six policy-holder / vehicle fields of the trailer compulsory-insurance certificate template
- * (assets/trailer_template.pdf, A4), in both copies on page 1: the certificate and the credit notice.
+ * Fills the six policy-holder / vehicle fields of the trailer compulsory-insurance certificate
+ * (the Ayalon A4 form uploaded by the user), in both copies on page 1: the certificate and the credit notice.
  *
  * Fields: policy holder name, address, vehicle (licence) number, ID / company number, weight, maker / model.
- * The template itself has these cells empty and contains only fictitious values elsewhere.
+ * The form is uploaded by the user (nothing is bundled): the old values of these cells are covered first.
  * Coordinates are top-down points measured from the printed cells.
  */
 public final class TrailerInsuranceFiller {
@@ -44,6 +44,24 @@ public final class TrailerInsuranceFiller {
     private static final Cell BOTTOM_MAKER = new Cell(492.5f, 706.2f, 98f);
     private static final Cell BOTTOM_WEIGHT = new Cell(353.5f, 706.2f, 44f);
 
+    /** The old values to hide: {x0, top, x1, bottom} in top-down points, kept clear of the printed labels. */
+    private static final float[][] COVERS = {
+            // certificate (top copy)
+            {501f, 206.5f, 574.5f, 223.2f},   // name
+            {361f, 186.2f, 423f, 203f},       // ID
+            {396f, 252f, 571.5f, 266.2f},     // address
+            {511f, 278f, 554.5f, 290f},       // plate
+            {403f, 278f, 476f, 290f},         // maker / model
+            {448f, 306f, 467f, 323f},         // weight
+            // credit notice (bottom copy)
+            {341f, 626.2f, 396.5f, 643f},     // ID
+            {517f, 652.4f, 566.5f, 666.6f},   // name
+            {303f, 676f, 568.5f, 690.6f},     // address
+            {505f, 699.5f, 566.5f, 714.6f},   // plate
+            {419f, 699.5f, 493f, 714.6f},     // maker / model
+            {334.5f, 699.5f, 354f, 714.6f},   // weight
+    };
+
     /**
      * @param makerModel the maker followed by the model, as one line
      */
@@ -58,6 +76,12 @@ public final class TrailerInsuranceFiller {
         PDPageContentStream cs = new PDPageContentStream(doc, page,
                 PDPageContentStream.AppendMode.APPEND, true, true);
         try {
+            // hide the values printed on the uploaded form (the cells stay: only the old text is covered)
+            cs.setNonStrokingColor(255, 255, 255);
+            for (float[] c : COVERS) {
+                cs.addRect(c[0] * k, pageH - c[3] * k, (c[2] - c[0]) * k, (c[3] - c[1]) * k);
+                cs.fill();
+            }
             cs.setNonStrokingColor(0, 0, 0);
             put(cs, font, pageH, k, TOP_NAME, owner);
             put(cs, font, pageH, k, TOP_ID, id);

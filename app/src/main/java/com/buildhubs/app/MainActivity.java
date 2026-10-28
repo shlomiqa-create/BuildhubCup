@@ -32,6 +32,7 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScanning;
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult;
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
 import com.tom_roush.pdfbox.pdmodel.PDDocument;
+import com.tom_roush.pdfbox.pdmodel.PDPage;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
 
 import java.io.File;
@@ -63,6 +64,9 @@ public class MainActivity extends AppCompatActivity {
 
     private Uri sourceUri;
     private Uri targetUri;
+    private Uri trailerUri;        // the trailer insurance PDF the user uploaded (remembered)
+    private boolean pickingTrailer;
+    private TextView trailerLabel;
     private TextView sourceLabel;
     private TextView targetLabel;
     private TextView status;
@@ -83,6 +87,7 @@ public class MainActivity extends AppCompatActivity {
         registerPicker();
         buildUi();
         loadSavedTarget();
+        loadSavedTrailer();
         // A PDF opened with / shared to the app (WhatsApp, Files, Gmail...) becomes the source automatically.
         if (savedInstanceState == null) handleIncoming(getIntent());
     }
@@ -131,6 +136,23 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void loadSavedTrailer() {
+        try {
+            String saved = getSharedPreferences("buildhubs", MODE_PRIVATE).getString("trailer_uri", null);
+            if (saved == null) return;
+            Uri uri = Uri.parse(saved);
+            for (android.content.UriPermission p : getContentResolver().getPersistedUriPermissions()) {
+                if (p.getUri().equals(uri) && p.isReadPermission()) {
+                    trailerUri = uri;
+                    trailerLabel.setText("טופס נגרר (נשמר): " + displayName(uri));
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not restore the trailer form", e);
+        }
+    }
+
     private void registerPicker() {
         scannerLauncher = registerForActivityResult(new ActivityResultContracts.StartIntentSenderForResult(), result -> {
             if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
@@ -147,7 +169,13 @@ public class MainActivity extends AppCompatActivity {
                 getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
             } catch (Exception ignored) { }
 
-            if (pickingSource) {
+            if (pickingTrailer) {
+                pickingTrailer = false;
+                trailerUri = uri;
+                getSharedPreferences("buildhubs", MODE_PRIVATE).edit().putString("trailer_uri", uri.toString()).apply();
+                trailerLabel.setText("טופס נגרר: " + displayName(uri));
+                createTrailer(); // continue with what the user asked for
+            } else if (pickingSource) {
                 sourceUri = uri;
                 sourceLabel.setText("מקור: " + displayName(uri));
             } else {
@@ -209,8 +237,14 @@ public class MainActivity extends AppCompatActivity {
         formButton.setOnClickListener(v -> createPowerOfAttorney());
         root.addView(formButton);
 
+        trailerLabel = label("טופס נגרר: לא נבחר (לחיצה על \"נגרר\" תבקש לבחור את ה-PDF)");
+        root.addView(trailerLabel);
         Button trailerButton = button("נגרר");
         trailerButton.setOnClickListener(v -> createTrailer());
+        trailerButton.setOnLongClickListener(v -> { // long press: choose another trailer form
+            chooseTrailerForm();
+            return true;
+        });
         root.addView(trailerButton);
 
         viewButton = button("4. צפייה ב-PDF שנוצר");
@@ -1157,7 +1191,34 @@ public class MainActivity extends AppCompatActivity {
             status.setText("יש לבחור קודם רישיון רכב (PDF או תמונה).");
             return;
         }
+        if (trailerUri == null) {
+            chooseTrailerForm();
+            return;
+        }
         withFields("קורא את הרישיון...", f -> showTrailerDialog(f), false);
+    }
+
+    /** The trailer insurance PDF is uploaded by the user (nothing is bundled in the app). */
+    private void chooseTrailerForm() {
+        status.setText("בחר את קובץ ה-PDF של הביטוח לנגרר. הוא יישמר לפעם הבאה (לחיצה ארוכה על \"נגרר\" מחליפה אותו).");
+        pickingTrailer = true;
+        pickingSource = false;
+        picker.launch(new String[]{"application/pdf"});
+    }
+
+    /** The coordinates in TrailerInsuranceFiller belong to the Ayalon A4 certificate: refuse other documents. */
+    private boolean looksLikeAyalonCertificate(PDDocument document) {
+        try {
+            PDPage first = document.getPage(0);
+            float w = first.getMediaBox().getWidth(), h = first.getMediaBox().getHeight();
+            if (Math.abs(w - 595.3f) > 4f || Math.abs(h - 841.9f) > 4f) return false;
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setStartPage(1);
+            stripper.setEndPage(1);
+            return stripper.getText(document).toLowerCase(Locale.ROOT).contains("ayalon");
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static String joinWords(String a, String b) {
@@ -1210,8 +1271,13 @@ public class MainActivity extends AppCompatActivity {
     private void writeTrailer(String owner, String address, String plate, String id, String weight, String makerModel)
             throws Exception {
         File output = new File(outputDir(), "BuildHubs_Trailer_" + System.currentTimeMillis() + ".pdf");
-        try (InputStream template = getAssets().open("trailer_template.pdf");
-             PDDocument document = PDDocument.load(template)) {
+        try (InputStream template = getContentResolver().openInputStream(trailerUri)) {
+            if (template == null) throw new Exception("לא ניתן לפתוח את טופס הנגרר. בחר אותו מחדש (לחיצה ארוכה על \"נגרר\").");
+            PDDocument document = PDDocument.load(template);
+            try {
+            if (document.getNumberOfPages() == 0 || !looksLikeAyalonCertificate(document)) {
+                throw new Exception("הקובץ אינו תעודת ביטוח חובה של איילון בגודל A4. בחר את הטופס הנכון (לחיצה ארוכה על \"נגרר\").");
+            }
             try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
                 TrailerInsuranceFiller.fill(document, owner, address, plate, id, weight, makerModel, fontInput);
             }
@@ -1219,6 +1285,9 @@ public class MainActivity extends AppCompatActivity {
                 ExampleMark.apply(document, fontInput);
             }
             document.save(output);
+            } finally {
+                document.close();
+            }
         }
         lastOutput = output;
         viewButton.setEnabled(true);
