@@ -99,6 +99,13 @@ public final class LicenseParser {
         for (Item i : row(items, 337, 6, 400, makerMaxX, dy)) mk.add(i.str);
         f.make = join(mk);
 
+        // total weight (right column, below the tyres); the permitted weight row is the fallback
+        f.weight = firstNumber(row(items, 193, 6, 430, 556, dy));
+        if (f.weight == null) f.weight = firstNumber(row(items, 205, 6, 430, 556, dy));
+
+        // model (lower box, left of the maker): Hebrew words read right-to-left, Latin ones left-to-right
+        f.model = joinModel(row(items, 337, 9, 200, 440, dy));
+
         return f;
     }
 
@@ -125,6 +132,35 @@ public final class LicenseParser {
             if (score > bestScore) { bestScore = score; best = w; }
         }
         return best;
+    }
+
+    private static String firstNumber(List<Item> row) {
+        for (Item i : row) {
+            if (i.str.matches("\\d{2,5}")) return i.str;
+        }
+        return null;
+    }
+
+    /** Printed labels of the lower box: never part of a model name. */
+    private static final java.util.Set<String> BOX_LABELS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "מרכב", "רמת", "גימור", "קבוצת", "רישוי", "דגם", "תוצר", "כינוי", "מסחרי"));
+
+    /**
+     * Model of the lower box. Models are Latin letters and digits ("KLZ1000 ABS"), read left-to-right;
+     * Hebrew words (label remnants) are only used when no Latin word was found. 'row' is sorted right-to-left.
+     */
+    private static String joinModel(List<Item> row) {
+        List<String> latin = new ArrayList<>();
+        List<String> hebrew = new ArrayList<>();
+        for (Item i : row) {
+            if (HEB.matcher(i.str).find()) {
+                if (!BOX_LABELS.contains(i.str)) hebrew.add(i.str);
+            } else {
+                latin.add(0, i.str); // right-to-left order -> left-to-right
+            }
+        }
+        String s = join(latin.isEmpty() ? hebrew : latin);
+        return s.isEmpty() ? null : s;
     }
 
     /** Words whose baseline is within tol of (y + dy) and whose left edge is in [xMin, xMax), right-to-left. */

@@ -19,6 +19,8 @@ public final class VehicleParser {
 
     public static class Fields {
         public String owner, id, vehicle, address, year, engine, make, vin;
+        /** Only set by the license parsers (not counted by count()): used by the trailer insurance form. */
+        public String weight, model;
 
         public int count() {
             int n = 0;

@@ -16,6 +16,8 @@ final class FakeLicense {
     static final String YEAR = "2015";
     static final String ENGINE = "1598";
     static final String MAKE = "טויוטה";
+    static final String WEIGHT = "500";
+    static final String MODEL = "KLZ1000 ABS";
     static final String CHASSIS = "JTDKB20U123456789";    // 17 characters
     static final String VIN_WITHOUT_FIRST_3 = "KB20U123456789";
 
@@ -49,6 +51,9 @@ final class FakeLicense {
         t.add(new Tok("456789", 243, 132));
         t.add(new Tok(ENGINE, 397, 156));
         t.add(new Tok(MAKE, 482, 337));
+        t.add(new Tok(WEIGHT, 505, 193));
+        t.add(new Tok("KLZ1000", 290, 337));
+        t.add(new Tok("ABS", 340, 337));
         return t;
     }
 

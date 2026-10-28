@@ -23,6 +23,9 @@ public class LicenseParserTest {
         assertEquals(FakeLicense.ENGINE, f.engine);
         assertEquals(FakeLicense.MAKE, f.make);
         assertEquals(FakeLicense.VIN_WITHOUT_FIRST_3, f.vin);
+        assertEquals(FakeLicense.WEIGHT, f.weight);
+        assertEquals(FakeLicense.MODEL, f.model);   // Latin words read left to right
+        assertEquals(8, f.count());                // weight / model are not part of the count
     }
 
     @Test

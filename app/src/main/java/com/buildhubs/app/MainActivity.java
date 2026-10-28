@@ -209,6 +209,10 @@ public class MainActivity extends AppCompatActivity {
         formButton.setOnClickListener(v -> createPowerOfAttorney());
         root.addView(formButton);
 
+        Button trailerButton = button("נגרר");
+        trailerButton.setOnClickListener(v -> createTrailer());
+        root.addView(trailerButton);
+
         viewButton = button("4. צפייה ב-PDF שנוצר");
         viewButton.setEnabled(false);
         viewButton.setOnClickListener(v -> viewFile());
@@ -303,6 +307,11 @@ public class MainActivity extends AppCompatActivity {
      * Fields that came from OCR are shown for confirmation / editing first, because OCR can misread digits.
      */
     private void withFields(String busyText, final FieldsTask task) {
+        withFields(busyText, task, true);
+    }
+
+    /** @param confirmOcr show the 8-field confirmation dialog for results read from an image */
+    private void withFields(String busyText, final FieldsTask task, final boolean confirmOcr) {
         if (busy) {
             status.setText("עדיין מעבד, נא להמתין...");
             return;
@@ -326,7 +335,7 @@ public class MainActivity extends AppCompatActivity {
                 busy = false;
                 if (failure != null) {
                     showError(failure);
-                } else if (fields.fromOcr) {
+                } else if (fields.fromOcr && confirmOcr) {
                     confirmFields(fields, task);
                 } else {
                     runTask(task, fields);
@@ -417,6 +426,8 @@ public class MainActivity extends AppCompatActivity {
                     licFields.year = lic.year;
                     licFields.engine = lic.engine;
                     licFields.make = lic.make;
+                    licFields.weight = lic.weight;
+                    licFields.model = lic.model;
                     licFields.vin = lic.vin;
                     Log.d(TAG, "License format detected\n" + licFields.toDebugString());
                     return licFields;
@@ -507,6 +518,8 @@ public class MainActivity extends AppCompatActivity {
         f.engine = r.engine;
         f.make = r.make;
         f.vin = r.vin;
+        f.weight = r.weight;
+        f.model = r.model;
         f.fromOcr = true;
         Log.d(TAG, "OCR result\n" + f.toDebugString());
         return f;
@@ -1024,6 +1037,9 @@ public class MainActivity extends AppCompatActivity {
                 PdfFiller.fill(document, f.owner, f.id, f.vehicle, f.address,
                         f.year, f.engine, f.make, f.vin, fontInput);
             }
+            try (InputStream markFont = getAssets().open("DejaVuSans.ttf")) {
+                ExampleMark.apply(document, markFont); // insurance documents are study examples
+            }
             document.save(output);
         } finally {
             document.close();
@@ -1135,6 +1151,84 @@ public class MainActivity extends AppCompatActivity {
         return to;
     }
 
+    /** "נגרר": trailer compulsory-insurance certificate (study example) from the license / details of the source. */
+    private void createTrailer() {
+        if (sourceUri == null) {
+            status.setText("יש לבחור קודם רישיון רכב (PDF או תמונה).");
+            return;
+        }
+        withFields("קורא את הרישיון...", f -> showTrailerDialog(f), false);
+    }
+
+    private static String joinWords(String a, String b) {
+        String x = a == null ? "" : a.trim();
+        String y = b == null ? "" : b.trim();
+        return (x + " " + y).trim();
+    }
+
+    /** The six fields of the trailer insurance, editable: a source may lack the weight, OCR may misread digits. */
+    private void showTrailerDialog(final Fields f) {
+        String[] labels = {"שם בעל הפוליסה", "כתובתו", "מס' רישוי", "ת.ז / ח.פ.", "משקל", "יצרן / דגם"};
+        String[] values = {f.owner, f.address, f.vehicle, f.id, f.weight, joinWords(f.make, f.model)};
+        final EditText[] boxes = new EditText[labels.length];
+
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setPadding(40, 20, 40, 0);
+        TextView hint = new TextView(this);
+        hint.setText("בדוק והשלם את הפרטים (למשל משקל). המסמך יסומן כ\"דוגמה ללימוד\".");
+        column.addView(hint);
+        for (int i = 0; i < labels.length; i++) {
+            TextView label = new TextView(this);
+            label.setText(labels[i]);
+            label.setPadding(0, 16, 0, 0);
+            column.addView(label);
+            boxes[i] = new EditText(this);
+            boxes[i].setText(values[i] == null ? "" : values[i]);
+            boxes[i].setSingleLine(i != 1);
+            column.addView(boxes[i]);
+        }
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(column);
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("ביטוח נגרר")
+                .setView(scroll)
+                .setPositiveButton("יצירה", (dialog, which) -> {
+                    try {
+                        writeTrailer(boxes[0].getText().toString().trim(), boxes[1].getText().toString().trim(),
+                                boxes[2].getText().toString().trim(), boxes[3].getText().toString().trim(),
+                                boxes[4].getText().toString().trim(), boxes[5].getText().toString().trim());
+                    } catch (Exception e) {
+                        showError(e);
+                    }
+                })
+                .setNegativeButton("ביטול", (dialog, which) -> status.setText("בוטל."))
+                .show();
+    }
+
+    private void writeTrailer(String owner, String address, String plate, String id, String weight, String makerModel)
+            throws Exception {
+        File output = new File(outputDir(), "BuildHubs_Trailer_" + System.currentTimeMillis() + ".pdf");
+        try (InputStream template = getAssets().open("trailer_template.pdf");
+             PDDocument document = PDDocument.load(template)) {
+            try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
+                TrailerInsuranceFiller.fill(document, owner, address, plate, id, weight, makerModel, fontInput);
+            }
+            try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
+                ExampleMark.apply(document, fontInput);
+            }
+            document.save(output);
+        }
+        lastOutput = output;
+        viewButton.setEnabled(true);
+        showPreview(output);
+        lastInsurance = output;
+        lastPlate = plate;
+        status.setText("נוצר ביטוח נגרר (דוגמה):\n" + output.getAbsolutePath()
+                + "\nלשיתוף: כפתורי \"שיתוף\" או \"שיתוף כתמונה\".");
+    }
+
     /** "טופס": fills the power-of-attorney form (bundled in assets) from the selected source PDF. */
     private void createPowerOfAttorney() {
         if (sourceUri == null) {
@@ -1236,7 +1330,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String describe(File f) {
-        String kind = f.getName().startsWith("BuildHubs_Form_") ? "טופס" : "ביטוח";
+        String name = f.getName();
+        String kind = name.startsWith("BuildHubs_Form_") ? "טופס"
+                : (name.startsWith("BuildHubs_Trailer_") ? "ביטוח נגרר" : "ביטוח");
         String when = new java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.US)
                 .format(new java.util.Date(f.lastModified()));
         return kind + " · " + when + " · " + Math.max(1L, f.length() / 1024L) + " KB";
@@ -1341,6 +1437,8 @@ public class MainActivity extends AppCompatActivity {
         String make;
         String vin;
         boolean fromOcr; // recognised from an image: shown for confirmation before use
+        String weight;   // total weight (licenses only): used by the trailer insurance
+        String model;    // model (licenses only): used by the trailer insurance
 
         int count() {
             int n = 0;

@@ -22,6 +22,8 @@ public class OcrLicenseParserTest {
         assertEquals(FakeLicense.ENGINE, f.engine);
         assertEquals(FakeLicense.MAKE, f.make);
         assertEquals(FakeLicense.VIN_WITHOUT_FIRST_3, f.vin);
+        assertEquals(FakeLicense.WEIGHT, f.weight);
+        assertEquals(FakeLicense.MODEL, f.model);
     }
 
     /** A refiner that finds nothing (the first pass has to be enough). */

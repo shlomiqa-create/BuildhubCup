@@ -111,10 +111,23 @@ public final class PdfFiller {
      */
     static String toVisual(String s) {
         if (!hasHebrew(s)) return s;
-        String[] w = s.split(" +");
+        // Units: a Hebrew word, or a run of consecutive Latin / number words ("KLZ1000 ABS") which keeps its own
+        // left-to-right order. The units are laid out right-to-left.
+        java.util.List<String> units = new java.util.ArrayList<>();
+        java.util.List<Boolean> hebrewUnit = new java.util.ArrayList<>();
+        for (String word : s.trim().split(" +")) {
+            boolean heb = hasHebrew(word);
+            int last = units.size() - 1;
+            if (!heb && last >= 0 && !hebrewUnit.get(last)) {
+                units.set(last, units.get(last) + " " + word);
+            } else {
+                units.add(word);
+                hebrewUnit.add(heb);
+            }
+        }
         StringBuilder sb = new StringBuilder();
-        for (int i = w.length - 1; i >= 0; i--) {
-            String t = hasHebrew(w[i]) ? new StringBuilder(w[i]).reverse().toString() : w[i];
+        for (int i = units.size() - 1; i >= 0; i--) {
+            String t = hebrewUnit.get(i) ? new StringBuilder(units.get(i)).reverse().toString() : units.get(i);
             if (sb.length() > 0) sb.append(' ');
             sb.append(t);
         }

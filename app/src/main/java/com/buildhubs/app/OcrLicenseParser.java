@@ -656,6 +656,8 @@ public final class OcrLicenseParser {
         m.engine = pickValue(win.engine, lose.engine);
         m.vin = win.vin != null && win.vin.length() == 14 ? win.vin
                 : (lose.vin != null && lose.vin.length() == 14 ? lose.vin : pickValue(win.vin, lose.vin));
+        m.weight = pickValue(win.weight, lose.weight);
+        m.model = pickValue(win.model, lose.model);
         return m;
     }
 
