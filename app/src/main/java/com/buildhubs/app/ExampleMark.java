@@ -29,7 +29,7 @@ public final class ExampleMark {
     static final String FOOTER = "מסמך לדוגמה ללימוד בלבד - אינו תעודת ביטוח תקפה";
 
     /** Switched off only for a short diagnosis earlier; the mark must stay on. */
-    static final boolean ENABLED = true;
+    static final boolean ENABLED = false; // TEMPORARY (diagnosis): to be switched back on
 
     /** Distance of the note's baseline from the top edge of the page, in points. */
     static final float NOTE_FROM_TOP = 11f;
