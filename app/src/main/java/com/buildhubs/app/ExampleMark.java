@@ -25,7 +25,11 @@ public final class ExampleMark {
     static final String SMALL = "אינו תעודת ביטוח תקפה";
     static final String FOOTER = "מסמך לדוגמה ללימוד בלבד - אינו תעודת ביטוח תקפה";
 
+    /** TEMPORARY: switched off only to find out whether the mark is what looks garbled. Must be true again. */
+    static final boolean ENABLED = false;
+
     public static void apply(PDDocument doc, InputStream fontStream) throws IOException {
+        if (!ENABLED) return;
         PDType0Font font = PDType0Font.load(doc, fontStream, true);
         PDExtendedGraphicsState translucent = new PDExtendedGraphicsState();
         translucent.setNonStrokingAlphaConstant(0.22f);
