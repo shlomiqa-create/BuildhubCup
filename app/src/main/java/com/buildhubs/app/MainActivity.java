@@ -68,6 +68,8 @@ public class MainActivity extends AppCompatActivity {
     private Uri trailerUri;        // the trailer insurance PDF the user uploaded (remembered)
     private boolean pickingTrailer;
     private TextView trailerLabel;
+    private EditText startBox, expiryBox, premiumBox; // optional changes of the period and the premium (regular form)
+    private TextView daysView;
     private TextView sourceLabel;
     private TextView targetLabel;
     private TextView status;
@@ -230,6 +232,28 @@ public class MainActivity extends AppCompatActivity {
         root.addView(targetButton);
 
         root.addView(new Space(this), new LinearLayout.LayoutParams(1, 24));
+        // optional: change the dates and the premium printed on the form; empty = as in the uploaded form
+        TextView termsTitle = label("שינוי תאריכים וסכום (לא חובה, תאריך: יום/חודש/שנה)");
+        root.addView(termsTitle);
+        startBox = termsBox("אך לא לפני:  01/11/2026", android.text.InputType.TYPE_CLASS_DATETIME | android.text.InputType.TYPE_DATETIME_VARIATION_DATE);
+        root.addView(startBox);
+        expiryBox = termsBox("מועד פקיעת הביטוח:  31/10/2027", android.text.InputType.TYPE_CLASS_DATETIME | android.text.InputType.TYPE_DATETIME_VARIATION_DATE);
+        root.addView(expiryBox);
+        premiumBox = termsBox("דמי ביטוח (סכום):  5384", android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        root.addView(premiumBox);
+        daysView = new TextView(this);
+        root.addView(daysView);
+        android.text.TextWatcher daysWatcher = new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(android.text.Editable s) {
+                daysView.setText(daysText(startBox.getText().toString(), expiryBox.getText().toString()));
+            }
+        };
+        startBox.addTextChangedListener(daysWatcher);
+        expiryBox.addTextChangedListener(daysWatcher);
+        daysWatcher.afterTextChanged(null);
+
         Button createButton = button("3. יצירת PDF חדש");
         createButton.setOnClickListener(v -> create());
         root.addView(createButton);
@@ -290,6 +314,14 @@ public class MainActivity extends AppCompatActivity {
         return view;
     }
 
+    private EditText termsBox(String hint, int inputType) {
+        EditText box = new EditText(this);
+        box.setHint(hint);
+        box.setSingleLine(true);
+        box.setInputType(inputType);
+        return box;
+    }
+
     private Button button(String text) {
         Button button = new Button(this);
         button.setText(text);
@@ -314,12 +346,31 @@ public class MainActivity extends AppCompatActivity {
             status.setText("יש לבחור גם PDF מקור וגם PDF יעד.");
             return;
         }
+        final String start = startBox.getText().toString().trim();
+        final String expiry = expiryBox.getText().toString().trim();
+        final String premium = premiumBox.getText().toString().trim();
+        if (!start.isEmpty() && InsuranceDates.parse(start) == null) {
+            startBox.setError("תאריך לא תקין (יום/חודש/שנה)");
+            return;
+        }
+        if (!expiry.isEmpty() && InsuranceDates.parse(expiry) == null) {
+            expiryBox.setError("תאריך לא תקין (יום/חודש/שנה)");
+            return;
+        }
+        if (!start.isEmpty() && !expiry.isEmpty() && InsuranceDates.insuranceDays(start, expiry) < 0) {
+            expiryBox.setError("מועד הפקיעה לפני תחילת הביטוח");
+            return;
+        }
+        if (!premium.isEmpty() && InsuranceDates.formatAmount(premium) == null) {
+            premiumBox.setError("סכום לא תקין (מספר, למשל 5384 או 5384.50)");
+            return;
+        }
 
         withFields("קורא את הרישיון...", fields -> {
             File directory = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
             if (directory == null) directory = getFilesDir();
             File output = new File(directory, "BuildHubs_" + System.currentTimeMillis() + ".pdf");
-            editTarget(targetUri, output, fields);
+            editTarget(targetUri, output, fields, start, expiry, premium);
             lastOutput = output;
             viewButton.setEnabled(true);
             showPreview(output);
@@ -1059,7 +1110,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // Writing onto the target form is done by PdfFiller, using cell positions measured from the form's borders.
-    private void editTarget(Uri uri, File output, Fields f) throws Exception {
+    private void editTarget(Uri uri, File output, Fields f, String start, String expiry, String premium) throws Exception {
         PDDocument document;
         try (InputStream input = getContentResolver().openInputStream(uri)) {
             if (input == null) throw new Exception("לא ניתן לפתוח את PDF היעד.");
@@ -1073,6 +1124,14 @@ public class MainActivity extends AppCompatActivity {
                 PDType0Font font = PDType0Font.load(document, fontInput, true);
                 PdfFiller.fill(document, f.owner, f.id, f.vehicle, f.address,
                         f.year, f.engine, f.make, f.vin, font);
+                if (!isEmpty(start) || !isEmpty(expiry) || !isEmpty(premium)) {
+                    // Arial-like fonts (digits only) for the dates, the number of days and the premium
+                    try (InputStream regularInput = getAssets().open("ArimoDigits-Regular.ttf");
+                         InputStream boldInput = getAssets().open("ArimoDigits-Bold.ttf")) {
+                        PolicyTerms.apply(document, start, expiry, premium,
+                                PDType0Font.load(document, regularInput, true), PDType0Font.load(document, boldInput, true));
+                    }
+                }
                 ExampleMark.apply(document, font); // insurance documents are study examples
             }
             document.save(output);

@@ -51,6 +51,33 @@ public class InsuranceDatesTest {
     }
 
     @Test
+    public void amountsAreFormattedLikeTheForm() {
+        assertEquals("5,384.00", InsuranceDates.formatAmount("5384"));
+        assertEquals("5,384.50", InsuranceDates.formatAmount("5,384.5"));
+        assertEquals("5,384.00", InsuranceDates.formatAmount(" 5384.00 ₪"));
+        assertEquals("950.00", InsuranceDates.formatAmount("950"));
+        assertEquals("1,234,567.00", InsuranceDates.formatAmount("1234567"));
+        assertEquals("0.50", InsuranceDates.formatAmount("0.5"));
+        assertEquals("12.00", InsuranceDates.formatAmount("0012"));
+    }
+
+    @Test
+    public void badAmountsAreRejected() {
+        assertNull(InsuranceDates.formatAmount(""));
+        assertNull(InsuranceDates.formatAmount(null));
+        assertNull(InsuranceDates.formatAmount("abc"));
+        assertNull(InsuranceDates.formatAmount("0"));
+        assertNull(InsuranceDates.formatAmount("-5"));
+        assertNull(InsuranceDates.formatAmount("12.345"));
+        assertNull(InsuranceDates.formatAmount("1234567890"));
+    }
+
+    @Test
+    public void theDateOfIssueUsesATwoDigitYear() {
+        assertEquals("20/04/26", PolicyTerms.shortYear("20/04/2026"));
+    }
+
+    @Test
     public void normalizeUsesTheFormsFormat() {
         assertEquals("01/11/2026", InsuranceDates.normalize("1.11.26"));
         assertNull(InsuranceDates.normalize("32/01/2026"));

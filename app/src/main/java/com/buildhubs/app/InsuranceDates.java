@@ -42,6 +42,26 @@ public final class InsuranceDates {
         return days < 1 || days > 100000 ? -1 : (int) days;
     }
 
+    /**
+     * An amount in shekels as the form prints it: thousands separator and two decimals ("5384" -> "5,384.00").
+     * Accepts a currency sign, spaces and a comma as thousands separator; null when it is not a positive number.
+     */
+    public static String formatAmount(String text) {
+        if (text == null) return null;
+        String s = text.replace("₪", "").replace("ש\"ח", "").replace(" ", "").replace(",", "").trim();
+        if (s.isEmpty() || !s.matches("[0-9]{1,9}(\\.[0-9]{1,2})?")) return null;
+        String[] parts = s.split("\\.");
+        String whole = parts[0].replaceFirst("^0+(?=[0-9])", "");
+        String cents = parts.length > 1 ? (parts[1] + "0").substring(0, 2) : "00";
+        if (whole.equals("0") && cents.equals("00")) return null;
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < whole.length(); i++) {
+            if (i > 0 && (whole.length() - i) % 3 == 0) out.append(',');
+            out.append(whole.charAt(i));
+        }
+        return out + "." + cents;
+    }
+
     private static int daysInMonth(int y, int m) {
         switch (m) {
             case 2: return (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) ? 29 : 28;
