@@ -1250,27 +1250,86 @@ public class MainActivity extends AppCompatActivity {
             boxes[i].setSingleLine(i != 1);
             column.addView(boxes[i]);
         }
+
+        // optional: change the period printed on the form (dd/mm/yyyy); empty = leave the dates as in the uploaded form
+        TextView startLabel = new TextView(this);
+        startLabel.setText("אך לא לפני: (תאריך, למשל 01/11/2026)");
+        startLabel.setPadding(0, 28, 0, 0);
+        column.addView(startLabel);
+        final EditText startBox = new EditText(this);
+        startBox.setHint("dd/mm/yyyy");
+        startBox.setSingleLine(true);
+        startBox.setInputType(android.text.InputType.TYPE_CLASS_DATETIME | android.text.InputType.TYPE_DATETIME_VARIATION_DATE);
+        column.addView(startBox);
+        TextView expiryLabel = new TextView(this);
+        expiryLabel.setText("מועד פקיעת הביטוח: (תאריך, למשל 31/10/2027)");
+        expiryLabel.setPadding(0, 16, 0, 0);
+        column.addView(expiryLabel);
+        final EditText expiryBox = new EditText(this);
+        expiryBox.setHint("dd/mm/yyyy");
+        expiryBox.setSingleLine(true);
+        expiryBox.setInputType(android.text.InputType.TYPE_CLASS_DATETIME | android.text.InputType.TYPE_DATETIME_VARIATION_DATE);
+        column.addView(expiryBox);
+        final TextView daysView = new TextView(this);
+        daysView.setPadding(0, 16, 0, 0);
+        column.addView(daysView);
+        android.text.TextWatcher daysWatcher = new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(android.text.Editable s) {
+                daysView.setText(daysText(startBox.getText().toString(), expiryBox.getText().toString()));
+            }
+        };
+        startBox.addTextChangedListener(daysWatcher);
+        expiryBox.addTextChangedListener(daysWatcher);
+        daysWatcher.afterTextChanged(null);
+
         ScrollView scroll = new ScrollView(this);
         scroll.addView(column);
 
-        new androidx.appcompat.app.AlertDialog.Builder(this)
+        final androidx.appcompat.app.AlertDialog dialog = new androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle("ביטוח נגרר")
                 .setView(scroll)
-                .setPositiveButton("יצירה", (dialog, which) -> {
-                    try {
-                        writeTrailer(boxes[0].getText().toString().trim(), boxes[1].getText().toString().trim(),
-                                boxes[2].getText().toString().trim(), boxes[3].getText().toString().trim(),
-                                boxes[4].getText().toString().trim(), boxes[5].getText().toString().trim());
-                    } catch (Exception e) {
-                        showError(e);
-                    }
-                })
-                .setNegativeButton("ביטול", (dialog, which) -> status.setText("בוטל."))
-                .show();
+                .setPositiveButton("יצירה", null)
+                .setNegativeButton("ביטול", (d, which) -> status.setText("בוטל."))
+                .create();
+        dialog.show();
+        // set after show() so that an invalid date keeps the dialog open
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String start = startBox.getText().toString().trim();
+            String expiry = expiryBox.getText().toString().trim();
+            if (!start.isEmpty() && InsuranceDates.parse(start) == null) {
+                startBox.setError("תאריך לא תקין (יום/חודש/שנה)");
+                return;
+            }
+            if (!expiry.isEmpty() && InsuranceDates.parse(expiry) == null) {
+                expiryBox.setError("תאריך לא תקין (יום/חודש/שנה)");
+                return;
+            }
+            if (!start.isEmpty() && !expiry.isEmpty() && InsuranceDates.insuranceDays(start, expiry) < 0) {
+                expiryBox.setError("מועד הפקיעה לפני תחילת הביטוח");
+                return;
+            }
+            dialog.dismiss();
+            try {
+                writeTrailer(boxes[0].getText().toString().trim(), boxes[1].getText().toString().trim(),
+                        boxes[2].getText().toString().trim(), boxes[3].getText().toString().trim(),
+                        boxes[4].getText().toString().trim(), boxes[5].getText().toString().trim(), start, expiry);
+            } catch (Exception e) {
+                showError(e);
+            }
+        });
     }
 
-    private void writeTrailer(String owner, String address, String plate, String id, String weight, String makerModel)
-            throws Exception {
+    /** "מספר ימי הביטוח" from the two dates, both days counted (01/11/2026 - 31/10/2027 = 365). */
+    private static String daysText(String start, String expiry) {
+        if (start.trim().isEmpty() || expiry.trim().isEmpty()) return "מספר ימי הביטוח: (יחושב לפי שני התאריכים)";
+        int days = InsuranceDates.insuranceDays(start, expiry);
+        return days < 0 ? "מספר ימי הביטוח: בדוק את התאריכים" : "מספר ימי הביטוח: " + days;
+    }
+
+    private void writeTrailer(String owner, String address, String plate, String id, String weight, String makerModel,
+                              String startDate, String expiryDate) throws Exception {
         File output = new File(outputDir(), "BuildHubs_Trailer_" + System.currentTimeMillis() + ".pdf");
         try (InputStream template = getContentResolver().openInputStream(trailerUri)) {
             if (template == null) throw new Exception("לא ניתן לפתוח את טופס הנגרר. בחר אותו מחדש (לחיצה ארוכה על \"נגרר\").");
@@ -1280,7 +1339,7 @@ public class MainActivity extends AppCompatActivity {
                 throw new Exception("הקובץ אינו תעודת ביטוח חובה של איילון בגודל A4. בחר את הטופס הנכון (לחיצה ארוכה על \"נגרר\").");
             }
             try (InputStream fontInput = getAssets().open("Cousine-Regular.ttf")) { // monospaced, like the form
-                TrailerInsuranceFiller.fill(document, owner, address, plate, id, weight, makerModel, fontInput);
+                TrailerInsuranceFiller.fill(document, owner, address, plate, id, weight, makerModel, startDate, expiryDate, fontInput);
             }
             try (InputStream fontInput = getAssets().open("DejaVuSans.ttf")) {
                 ExampleMark.apply(document, fontInput);
@@ -1295,7 +1354,11 @@ public class MainActivity extends AppCompatActivity {
         showPreview(output);
         lastInsurance = output;
         lastPlate = plate;
-        status.setText("נוצר ביטוח נגרר (דוגמה):\n" + output.getAbsolutePath()
+        int insuranceDays = InsuranceDates.insuranceDays(startDate, expiryDate);
+        String period = insuranceDays > 0
+                ? "\nתקופת הביטוח: " + InsuranceDates.normalize(startDate) + " - " + InsuranceDates.normalize(expiryDate)
+                + " (" + insuranceDays + " ימים)" : "";
+        status.setText("נוצר ביטוח נגרר (דוגמה):\n" + output.getAbsolutePath() + period
                 + "\nלשיתוף: כפתורי \"שיתוף\" או \"שיתוף כתמונה\".");
     }
 

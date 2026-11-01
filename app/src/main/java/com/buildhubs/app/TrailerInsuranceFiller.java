@@ -84,12 +84,43 @@ public final class TrailerInsuranceFiller {
             {334.5f, 699.5f, 354f, 714.6f},   // weight
     };
 
+    /** A date typed in the form: the old ink to hide {x0, top, x1, bottom}, and the centre of the new date. */
+    private static final class DateCell {
+        final float[] cover;
+        final float cx, cy;
+        DateCell(float x0, float top, float x1, float bottom, float cx, float cy) {
+            this.cover = new float[]{x0, top, x1, bottom};
+            this.cx = cx;
+            this.cy = cy;
+        }
+    }
+
+    // "not before" date (start of the insurance), top copy: the box at the top left
+    private static final DateCell TOP_START = new DateCell(145.8f, 168.9f, 206.3f, 179.3f, 176.05f, 174.1f);
+    private static final DateCell TOP_EXPIRY = new DateCell(46.1f, 194.4f, 106.3f, 204.8f, 76.2f, 199.6f);
+    private static final DateCell TOP_ISSUE = new DateCell(391.9f, 347.4f, 452.5f, 356.9f, 422.2f, 352.6f);
+    // credit notice (bottom copy)
+    private static final DateCell BOTTOM_START = new DateCell(449.1f, 724.4f, 509.7f, 734.8f, 479.4f, 729.6f);
+    private static final DateCell BOTTOM_EXPIRY = new DateCell(310.1f, 724.4f, 370.7f, 734.8f, 340.4f, 729.6f);
+    private static final DateCell BOTTOM_START_BOX = new DateCell(156.6f, 755.7f, 217.1f, 766.1f, 186.85f, 760.9f);
+    private static final DateCell BOTTOM_ISSUE = new DateCell(388.9f, 781.3f, 449.5f, 791.6f, 419.2f, 786.45f);
+
+    public static void fill(PDDocument doc, String owner, String address, String plate, String id,
+                            String weight, String makerModel, InputStream fontStream) throws IOException {
+        fill(doc, owner, address, plate, id, weight, makerModel, null, null, fontStream);
+    }
+
     /**
      * @param makerModel the maker followed by the model, as one line
+     * @param startDate  "not before" date, dd/mm/yyyy (also written as the date of issue); empty = leave as is
+     * @param expiryDate expiry date of the insurance, dd/mm/yyyy; empty = leave as is
      * @param fontStream a monospaced font with Hebrew (Cousine), like the Courier New of the form
      */
     public static void fill(PDDocument doc, String owner, String address, String plate, String id,
-                            String weight, String makerModel, InputStream fontStream) throws IOException {
+                            String weight, String makerModel, String startDate, String expiryDate,
+                            InputStream fontStream) throws IOException {
+        String start = InsuranceDates.normalize(startDate);
+        String expiry = InsuranceDates.normalize(expiryDate);
         PDPage page = doc.getPage(0);
         float pageW = page.getMediaBox().getWidth();
         float pageH = page.getMediaBox().getHeight();
@@ -104,6 +135,12 @@ public final class TrailerInsuranceFiller {
             for (float[] c : COVERS) {
                 cs.addRect(c[0] * k, pageH - c[3] * k, (c[2] - c[0]) * k, (c[3] - c[1]) * k);
                 cs.fill();
+            }
+            if (start != null) {
+                cover(cs, pageH, k, TOP_START, BOTTOM_START, BOTTOM_START_BOX, TOP_ISSUE, BOTTOM_ISSUE);
+            }
+            if (expiry != null) {
+                cover(cs, pageH, k, TOP_EXPIRY, BOTTOM_EXPIRY);
             }
             // the covers also hid some table lines: draw them again
             cs.setStrokingColor(122, 10, 59);
@@ -127,9 +164,39 @@ public final class TrailerInsuranceFiller {
             put(cs, font, pageH, k, BOTTOM_PLATE, plate);
             put(cs, font, pageH, k, BOTTOM_MAKER, makerModel);
             put(cs, font, pageH, k, BOTTOM_WEIGHT, weight);
+
+            if (start != null) {
+                for (DateCell c : new DateCell[]{TOP_START, BOTTOM_START, BOTTOM_START_BOX, TOP_ISSUE, BOTTOM_ISSUE}) {
+                    putDate(cs, font, pageH, k, c, start);
+                }
+            }
+            if (expiry != null) {
+                putDate(cs, font, pageH, k, TOP_EXPIRY, expiry);
+                putDate(cs, font, pageH, k, BOTTOM_EXPIRY, expiry);
+            }
         } finally {
             cs.close();
         }
+    }
+
+    private static void cover(PDPageContentStream cs, float pageH, float k, DateCell... cells) throws IOException {
+        cs.setNonStrokingColor(255, 255, 255);
+        for (DateCell c : cells) {
+            cs.addRect(c.cover[0] * k, pageH - c.cover[3] * k, (c.cover[2] - c.cover[0]) * k, (c.cover[3] - c.cover[1]) * k);
+            cs.fill();
+        }
+    }
+
+    private static void putDate(PDPageContentStream cs, PDType0Font font, float pageH, float k, DateCell c, String date)
+            throws IOException {
+        float size = SIZE * k;
+        float w = font.getStringWidth(date) / 1000f * size;
+        cs.setNonStrokingColor(INK, INK, INK);
+        cs.beginText();
+        cs.setFont(font, size);
+        cs.newLineAtOffset(c.cx * k - w / 2f, pageH - (c.cy * k + size * CAP / 2f));
+        cs.showText(date);
+        cs.endText();
     }
 
     private static void put(PDPageContentStream cs, PDType0Font font, float pageH, float k, Cell c, String text)
