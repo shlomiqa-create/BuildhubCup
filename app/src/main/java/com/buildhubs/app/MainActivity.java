@@ -70,6 +70,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView trailerLabel;
     private EditText startBox, expiryBox, premiumBox; // optional changes of the period and the premium (regular form)
     private TextView daysView;
+    private String termsWarning = ""; // fields of the dates / premium that were not found on the form
     private TextView sourceLabel;
     private TextView targetLabel;
     private TextView status;
@@ -370,13 +371,14 @@ public class MainActivity extends AppCompatActivity {
             File directory = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
             if (directory == null) directory = getFilesDir();
             File output = new File(directory, "BuildHubs_" + System.currentTimeMillis() + ".pdf");
+            termsWarning = "";
             editTarget(targetUri, output, fields, start, expiry, premium);
             lastOutput = output;
             viewButton.setEnabled(true);
             showPreview(output);
             lastInsurance = output;
             lastPlate = fields.vehicle;
-            status.setText("נוצר PDF חדש בהצלחה:\n" + output.getAbsolutePath()
+            status.setText("נוצר PDF חדש בהצלחה:\n" + output.getAbsolutePath() + termsWarning
                     + "\nלשיתוף: כפתורי \"שיתוף\" או \"שיתוף כתמונה\".");
         });
     }
@@ -1128,8 +1130,11 @@ public class MainActivity extends AppCompatActivity {
                     // Arial-like fonts (digits only) for the dates, the number of days and the premium
                     try (InputStream regularInput = getAssets().open("ArimoDigits-Regular.ttf");
                          InputStream boldInput = getAssets().open("ArimoDigits-Bold.ttf")) {
-                        PolicyTerms.apply(document, start, expiry, premium,
+                        java.util.List<String> notFound = PolicyTerms.apply(document, start, expiry, premium,
                                 PDType0Font.load(document, regularInput, true), PDType0Font.load(document, boldInput, true));
+                        if (!notFound.isEmpty()) {
+                            termsWarning = "\nלא נמצאו בטופס ולא עודכנו: " + join(notFound);
+                        }
                     }
                 }
                 ExampleMark.apply(document, font); // insurance documents are study examples
